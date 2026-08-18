@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDaemon } from '../../src/daemon/index.js';
+import { mergeHooks } from '../../src/cli/hook-config.js';
 
 function env() {
   const claudeDir = mkdtempSync(join(tmpdir(), 'ap-d-'));
@@ -122,6 +123,37 @@ test('a symlink inside uiDir cannot serve a file from outside it', async () => {
   const asset = await fetch(`http://127.0.0.1:${d.port}/assets/app.js`, { headers: { cookie } });
   assert.equal(asset.status, 200);
 
+  await d.stop();
+});
+
+test('health reports hooksInstalled false when settings.json has never been written', async () => {
+  const d = await startDaemon({ ...env(), portRange: { start: 19111, end: 19120 } });
+  const res = await fetch(`http://127.0.0.1:${d.port}/api/health`);
+  const body = await res.json();
+  assert.equal(body.hooksInstalled, false);
+  await d.stop();
+});
+
+test('health reports hooksInstalled true once our hooks are in settings.json', async () => {
+  const e = env();
+  const { hooks } = mergeHooks({}, '/opt/agentpanel/hooks');
+  writeFileSync(join(e.claudeDir, 'settings.json'), JSON.stringify({ hooks }));
+
+  const d = await startDaemon({ ...e, portRange: { start: 19121, end: 19130 } });
+  const res = await fetch(`http://127.0.0.1:${d.port}/api/health`);
+  const body = await res.json();
+  assert.equal(body.hooksInstalled, true);
+  await d.stop();
+});
+
+test('health reports hooksInstalled false when settings.json is malformed', async () => {
+  const e = env();
+  writeFileSync(join(e.claudeDir, 'settings.json'), 'not json{{{');
+
+  const d = await startDaemon({ ...e, portRange: { start: 19131, end: 19140 } });
+  const res = await fetch(`http://127.0.0.1:${d.port}/api/health`);
+  const body = await res.json();
+  assert.equal(body.hooksInstalled, false);
   await d.stop();
 });
 

@@ -1,7 +1,10 @@
 // test/cli/init.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeHooks, hookEntries, isOurs } from '../../src/cli/hook-config.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mergeHooks, hookEntries, isOurs, hooksInstalled } from '../../src/cli/hook-config.js';
 
 const DIR = '/opt/agentpanel/hooks';
 const foreign = {
@@ -80,4 +83,36 @@ test('isOurs recognises our scripts and nothing else', () => {
   assert.equal(isOurs({ command: '/x/hooks/agentpanel-bootstrap.sh' }), true);
   assert.equal(isOurs({ command: '/x/other.sh' }), false);
   assert.equal(isOurs({}), false);
+});
+
+test('hooksInstalled is false when settings.json does not exist', () => {
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-hi-')), 'settings.json');
+  assert.equal(hooksInstalled(settingsPath), false);
+});
+
+test('hooksInstalled is false when settings.json is malformed', () => {
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-hi-')), 'settings.json');
+  writeFileSync(settingsPath, 'not json{{{');
+  assert.equal(hooksInstalled(settingsPath), false);
+});
+
+test('hooksInstalled is false when settings.json has hooks but none of ours', () => {
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-hi-')), 'settings.json');
+  writeFileSync(settingsPath, JSON.stringify({ hooks: foreign }));
+  assert.equal(hooksInstalled(settingsPath), false);
+});
+
+test('hooksInstalled is true once init has written our hooks', () => {
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-hi-')), 'settings.json');
+  const { hooks } = mergeHooks(foreign, DIR);
+  writeFileSync(settingsPath, JSON.stringify({ hooks }));
+  assert.equal(hooksInstalled(settingsPath), true);
+});
+
+test('hooksInstalled is false again after uninstall removes our hooks', () => {
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-hi-')), 'settings.json');
+  const installed = mergeHooks(foreign, DIR).hooks;
+  const removed = mergeHooks(installed, DIR, { remove: true }).hooks;
+  writeFileSync(settingsPath, JSON.stringify({ hooks: removed }));
+  assert.equal(hooksInstalled(settingsPath), false);
 });

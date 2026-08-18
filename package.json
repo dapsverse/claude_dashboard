@@ -2,16 +2,18 @@
   "name": "agentpanel",
   "version": "0.1.0",
   "description": "Local dashboard for Claude Code: live subagent activity, agent and skill catalog",
+  "keywords": ["claude", "claude-code", "dashboard", "agents", "observability"],
+  "license": "MIT",
   "type": "module",
   "bin": { "agentpanel": "bin/agentpanel.js" },
   "engines": { "node": ">=22.5.0" },
-  "license": "MIT",
+  "files": ["bin", "src", "hooks", "dist", "README.md", "LICENSE"],
   "scripts": {
     "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'",
     "test:ui": "vitest run --root ui",
-    "build:ui": "vite build --config ui/vite.config.js"
+    "build:ui": "vite build --config ui/vite.config.js",
+    "prepack": "npm run build:ui"
   },
-  "files": ["bin", "src", "hooks", "dist"],
   "dependencies": {},
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
@@ -21,5 +23,6 @@
     "react-dom": "^19.2.8",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"
-  }
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/<owner>/agentpanel.git" }
 }

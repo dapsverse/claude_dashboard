@@ -1,4 +1,5 @@
 // src/cli/hook-config.js
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const OUR_MARKER = 'agentpanel';
@@ -7,6 +8,27 @@ export const OUR_SCRIPTS = ['agentpanel-hook.sh', 'agentpanel-bootstrap.sh'];
 export function isOurs(handler) {
   const cmd = handler?.command;
   return typeof cmd === 'string' && OUR_SCRIPTS.some((name) => cmd.includes(name));
+}
+
+// Answers "did `init` ever run here?" for the health route, so the UI can tell an unconfigured
+// install apart from one that is simply quiet. A missing or unreadable settings.json is not an
+// error here — it is the expected state before `init` has ever run — so both collapse to `false`.
+export function hooksInstalled(settingsPath) {
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  } catch {
+    return false;
+  }
+  const hooks = settings?.hooks;
+  if (!hooks || typeof hooks !== 'object') return false;
+  for (const groups of Object.values(hooks)) {
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      if (Array.isArray(group?.hooks) && group.hooks.some(isOurs)) return true;
+    }
+  }
+  return false;
 }
 
 const handler = (hooksDir, script, timeout) => ({

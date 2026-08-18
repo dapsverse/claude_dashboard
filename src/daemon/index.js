@@ -14,6 +14,7 @@ import { createRunsRepo } from '../store/runs.js';
 import { createSessionsRepo } from '../store/sessions.js';
 import { createCatalog } from '../catalog/index.js';
 import { startSweeper } from '../core/sweeper.js';
+import { hooksInstalled } from '../cli/hook-config.js';
 
 export const VERSION = '0.1.0';
 
@@ -71,7 +72,14 @@ export async function startDaemon({
     const routes = [
       authRoute({ token }),
       { method: 'GET', path: '/api/health', public: true,
-        handler: (_q, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, version: VERSION })); } },
+        handler: (_q, res) => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            version: VERSION,
+            hooksInstalled: hooksInstalled(join(claudeDir, 'settings.json')),
+          }));
+        } },
       streamRoute,
       catalogRoute({ catalog }),
       runsRoute({ runs }),
