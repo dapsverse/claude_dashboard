@@ -40,15 +40,20 @@ export function mergeHooks(existing = {}, hooksDir, { remove = false } = {}) {
 
   for (const event of new Set([...Object.keys(hooks), ...Object.keys(fresh)])) {
     let strippedAny = false;
+    // A group we do not recognise — a bare handler object, null, anything without a `hooks` array —
+    // belongs to the user or another tool. Pass it through untouched. Coercing it to an empty group
+    // would silently delete configuration we did not write, which is the one thing this must never do.
+    const isGroup = (g) => g && typeof g === 'object' && Array.isArray(g.hooks);
     const groups = (hooks[event] ?? [])
       .map((group) => {
-        const kept = (group.hooks ?? []).filter((h) => {
+        if (!isGroup(group)) return group;
+        const kept = group.hooks.filter((h) => {
           if (isOurs(h)) { strippedAny = true; return false; }
           return true;
         });
         return { ...group, hooks: kept };
       })
-      .filter((group) => group.hooks.length > 0);
+      .filter((group) => !isGroup(group) || group.hooks.length > 0);
 
     if (strippedAny) removed.push(event);
 

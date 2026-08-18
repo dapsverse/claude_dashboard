@@ -64,6 +64,17 @@ test('an event group left with no handlers is deleted, not left empty', () => {
   assert.equal(hooks.SubagentStop, undefined);
 });
 
+test('a foreign entry that is not a recognised group survives untouched', () => {
+  const bare = { SubagentStop: [{ type: 'command', command: '/foreign/script.sh' }] };
+  const { hooks } = mergeHooks(bare, DIR);
+  assert.ok(JSON.stringify(hooks.SubagentStop).includes('/foreign/script.sh'));
+});
+
+test('a malformed entry does not throw', () => {
+  assert.doesNotThrow(() => mergeHooks({ SubagentStop: [null] }, DIR));
+  assert.doesNotThrow(() => mergeHooks({ SubagentStop: [{ hooks: { not: 'an array' } }] }, DIR));
+});
+
 test('isOurs recognises our scripts and nothing else', () => {
   assert.equal(isOurs({ command: '"/x/hooks/agentpanel-hook.sh"' }), true);
   assert.equal(isOurs({ command: '/x/hooks/agentpanel-bootstrap.sh' }), true);
