@@ -60,6 +60,17 @@ Non-English UI. Support for harnesses other than Claude Code.
   `sessionId`, `cwd`, `gitBranch`, `isSidechain`, `parentUuid`, `uuid`, `timestamp`, `version`.
   `isSidechain: true` marks subagent traffic — the fallback signal if hooks are unavailable.
 - Port 8888 free at time of probe.
+- Hook input schemas are shipped as types in the SDK package (`sdk.d.ts`, `claudeCodeVersion: 2.1.234`).
+  Verified: `BaseHookInput` = `session_id`, `transcript_path`, `cwd`, `prompt_id?`, `permission_mode?`,
+  `agent_id?`, `agent_type?`, `effort?`. `PreToolUseHookInput` adds `tool_name`, `tool_input`,
+  and **`tool_use_id: string` (required)**. `PostToolUseHookInput` adds `tool_response`,
+  `tool_use_id: string`, `duration_ms?`. `SubagentStartHookInput` = `agent_id`, `agent_type`.
+  `SubagentStopHookInput` = `agent_id`, `agent_type`, `agent_transcript_path`, `stop_hook_active`,
+  `last_assistant_message?`, `background_tasks?`.
+- `HOOK_EVENTS` contains 31 events, including `SubagentStart`, `SubagentStop`, `TaskCreated`,
+  `TaskCompleted`, `PostToolUseFailure`, and `SessionEnd`.
+- `node:sqlite` works on Node 24.6.0 without flags but prints an ExperimentalWarning; verified suppressed
+  by spawning with `--disable-warning=ExperimentalWarning`.
 
 ## 6. Architecture
 
@@ -103,7 +114,8 @@ Hooks installed by `init`:
 | Event | Matcher | Purpose |
 |---|---|---|
 | `SessionStart` | — | bootstrap daemon, register session |
-| `PreToolUse` | `Task` | open an `AgentRun` |
+| `SubagentStart` | — | open an `AgentRun` keyed by `agent_id` |
+| `PreToolUse` | `Task` | attach `tool_use_id` + dispatch prompt to the run |
 | `PostToolUse` | `Task` | close the `AgentRun` |
 | `SubagentStop` | — | backstop close |
 | `SessionEnd` | — | mark session ended, sweep its open runs |
@@ -124,11 +136,18 @@ The agent and skill catalog is **not** stored in SQLite. It is scanned from the 
 by mtime, and watched with a debounced `fs.watch` that pushes changes over SSE. The filesystem is the source
 of truth; a cache that can disagree with it would be a bug generator.
 
-**Run correlation.** `PreToolUse[Task]` opens a run, `PostToolUse[Task]` closes it. Correlation uses
-`tool_use_id` when the hook payload carries it, otherwise FIFO matching on
-`(session_id, subagent_type, description)`. `SubagentStop` closes anything still open for that subagent. A
-sweeper marks runs `stale` when they have no close event after 30 minutes or their parent session ends — a
-visibly stale row is better than a spinner that lies indefinitely.
+**Run correlation.** `tool_use_id` is a required field on both `PreToolUseHookInput` and
+`PostToolUseHookInput` (verified in the shipped SDK types), so correlation is exact — `(session_id,
+tool_use_id)` is the primary key for a run, and no heuristic matching is needed. `SubagentStart` /
+`SubagentStop` supply `agent_id` and `agent_type` and are the authoritative open/close signals; the
+`PreToolUse[Task]` payload enriches the run with the dispatch `description` and `prompt` from `tool_input`,
+and `PostToolUse[Task]` supplies `tool_response` and `duration_ms` for the result preview.
+
+Both signal pairs are recorded because they answer different questions: `SubagentStart`/`SubagentStop` fire
+for the subagent itself, while `PreToolUse`/`PostToolUse[Task]` fire for the parent's dispatch. A run is
+opened by whichever arrives first and closed by whichever closing signal arrives first; late duplicates are
+idempotent no-ops. A sweeper marks runs `stale` when no close signal arrives within 30 minutes or their
+parent session ends — a visibly stale row is better than a spinner that lies indefinitely.
 
 **Retention.** Events older than 7 days are pruned on startup and daily; the window is configurable.
 
@@ -255,7 +274,7 @@ Test-driven, with no live token spend in the default suite.
 | Risk | Mitigation |
 |---|---|
 | `stream-json` and hook payload schemas are unversioned and can change between CLI releases | Pin a tested CLI/SDK version range; validate payload shape at startup and warn loudly on mismatch; keep the JSONL `isSidechain` reader as a fallback |
-| Hook payload may not carry `tool_use_id` | FIFO correlation fallback plus stale sweeper, both specified and tested |
+| ~~Hook payload may not carry `tool_use_id`~~ — RESOLVED 2026-08-18 | Verified required on both `PreToolUse` and `PostToolUse` in the SDK's shipped types. Stale sweeper retained for crashed or killed sessions, which produce no close event at all |
 | Daemon crash loses in-flight sessions | Session IDs persisted; reconnect resumes via `--resume` semantics |
 | Hooks are global and fire for unrelated projects | Every event is filtered and attributed by `cwd` and `session_id`; the UI scopes to the selected project |
 | Uninstall leaves hooks behind | `npx agentpanel uninstall` removes hooks, state directory, and database, and prints what it removed |
