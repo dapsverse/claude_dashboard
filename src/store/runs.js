@@ -29,9 +29,13 @@ export function createRunsRepo(db) {
     close({ id, status, endedAt, durationMs, resultPreview }) {
       const row = getStmt.get(id);
       if (!row) return false;
-      const duration = durationMs ?? (endedAt - row.started_at);
-      closeStmt.run(status, endedAt, duration, resultPreview ?? null, id);
-      return true;
+      // A clock step backwards (NTP correction, VM resume) must not store a negative duration.
+      const duration = durationMs ?? Math.max(0, endedAt - row.started_at);
+      const result = closeStmt.run(status, endedAt, duration, resultPreview ?? null, id);
+      // Report the state transition, not merely the row's existence: the UPDATE is guarded by
+      // `status = 'running'`, so a replayed close changes nothing and must not make the caller
+      // broadcast a second run.close for a run that already finished.
+      return result.changes > 0;
     },
     enrich({ sessionId, agentType }, { transcriptPath, resultPreview }) {
       const hit = oldestMatchStmt.get(sessionId, agentType);

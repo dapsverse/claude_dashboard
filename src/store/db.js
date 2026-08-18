@@ -36,5 +36,16 @@ export function openDb(path) {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
   chmodSync(path, 0o600);
+  restrictSidecars(path);
   return db;
+}
+
+// WAL leaves `-wal` and `-shm` beside the database, and SQLite creates them under the process umask
+// rather than copying the database's mode. They hold the same prompts and tool output as the database
+// itself until a checkpoint. The 0700 state directory is the real control — no other user can traverse
+// into it — but matching the modes costs nothing and removes the discrepancy.
+export function restrictSidecars(path) {
+  for (const suffix of ['-wal', '-shm']) {
+    try { chmodSync(`${path}${suffix}`, 0o600); } catch { /* not created yet, or already gone */ }
+  }
 }

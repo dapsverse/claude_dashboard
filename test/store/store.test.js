@@ -44,8 +44,26 @@ test('open is idempotent — a replayed hook does not duplicate or reset the row
 
 test('closing an unknown id is a silent no-op', () => {
   const runs = createRunsRepo(fresh());
-  runs.close({ id: 'ghost', status: 'done', endedAt: 1 });
+  assert.equal(runs.close({ id: 'ghost', status: 'done', endedAt: 1 }), false);
   assert.equal(runs.get('ghost'), null);
+});
+
+test('a replayed close reports no transition and does not alter the row', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  assert.equal(runs.close({ id: 's1:t1', status: 'done', endedAt: 3000, resultPreview: 'ok' }), true);
+  assert.equal(runs.close({ id: 's1:t1', status: 'error', endedAt: 9999, resultPreview: 'CHANGED' }), false);
+  const row = runs.get('s1:t1');
+  assert.equal(row.status, 'done');
+  assert.equal(row.endedAt, 3000);
+  assert.equal(row.resultPreview, 'ok');
+});
+
+test('a backwards clock cannot store a negative duration', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open({ ...baseRun, id: 'back', startedAt: 5000 });
+  runs.close({ id: 'back', status: 'done', endedAt: 1000 });
+  assert.equal(runs.get('back').durationMs, 0);
 });
 
 test('listActive returns only running rows, newest first', () => {
