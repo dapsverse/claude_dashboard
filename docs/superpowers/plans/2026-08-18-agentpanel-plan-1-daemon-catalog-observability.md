@@ -357,7 +357,7 @@ git commit -m "feat: add free port discovery"
 // test/core/runtime-file.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, statSync } from 'node:fs';
+import { mkdtempSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeRuntime, readRuntime, readLiveRuntime, clearRuntime, isAlive } from '../../src/core/runtime-file.js';
@@ -373,6 +373,20 @@ test('writes 0600 and reads back', () => {
 
 test('readRuntime returns null for missing or corrupt files', () => {
   assert.equal(readRuntime('/nonexistent/daemon.json'), null);
+  const f = file();
+  writeFileSync(f, 'not json');
+  assert.equal(readRuntime(f), null);
+});
+
+test('readRuntime rethrows a permission error instead of reporting no daemon', { skip: process.getuid?.() === 0 }, () => {
+  const f = file();
+  writeRuntime({ pid: process.pid, port: 8888, token: 'abc', startedAt: 1, version: '0.1.0' }, f);
+  chmodSync(f, 0o000);
+  try {
+    assert.throws(() => readRuntime(f), (e) => e.code === 'EACCES' || e.code === 'EPERM');
+  } finally {
+    chmodSync(f, 0o600);
+  }
 });
 
 test('readLiveRuntime returns null when the pid is dead', () => {
@@ -424,7 +438,15 @@ export function writeRuntime(info, file = runtimeFilePath()) {
 }
 
 export function readRuntime(file = runtimeFilePath()) {
-  try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    // A missing or corrupt file legitimately means "no daemon". Anything else — a permission
+    // problem above all — must surface: swallowing it would report "not running" for a daemon
+    // that is very much running, and `start` would launch a second one alongside it.
+    if (err?.code === 'ENOENT' || err instanceof SyntaxError) return null;
+    throw err;
+  }
 }
 
 export function isAlive(pid) {
@@ -770,7 +792,7 @@ port 0.
 ```js
 // src/daemon/server.js
 import { createServer as createHttpServer } from 'node:http';
-import { authorize } from './auth.js';
+import { authorize, checkHost } from './auth.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -789,8 +811,9 @@ export function createServer({ token, port, hub, routes }) {
     if (!route.public) {
       const verdict = authorize(req, { token, port: boundPort, stateChanging: !!route.stateChanging });
       if (!verdict.ok) return sendJson(res, verdict.status, { error: verdict.reason });
-    } else if (String(req.headers.host ?? '').split(':')[0] !== '127.0.0.1'
-            && String(req.headers.host ?? '').split(':')[0] !== 'localhost') {
+    } else if (!checkHost(req.headers, boundPort)) {
+      // Public routes skip the token but never the Host guard. Reuse auth.js's check rather than
+      // a second hostname parse here: one source of truth, and it validates the port too.
       return sendJson(res, 403, { error: 'bad_host' });
     }
 
