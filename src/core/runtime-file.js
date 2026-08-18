@@ -36,3 +36,22 @@ export function readLiveRuntime(file = runtimeFilePath()) {
 export function clearRuntime(file = runtimeFilePath()) {
   rmSync(file, { force: true });
 }
+
+// Two `agentpanel start` invocations racing each other both see no live daemon, both start, and the
+// second overwrites the first's runtime file — leaving a live daemon that stop/status/open can never
+// see again. An O_EXCL create is the smallest thing that makes the check-then-start sequence atomic.
+export function acquireStartLock(file = `${runtimeFilePath()}.lock`) {
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      writeFileSync(file, String(process.pid), { flag: 'wx', mode: 0o600 });
+      return () => rmSync(file, { force: true });
+    } catch (err) {
+      if (err?.code !== 'EEXIST') throw err;
+      const holder = Number(readFileSync(file, 'utf8').trim());
+      if (isAlive(holder)) return null;      // someone else is genuinely starting or running
+      rmSync(file, { force: true });         // stale lock from a killed process; take it over
+    }
+  }
+  return null;
+}

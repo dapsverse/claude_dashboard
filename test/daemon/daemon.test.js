@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDaemon } from '../../src/daemon/index.js';
@@ -88,4 +88,51 @@ test('a second daemon takes the next port instead of failing', async () => {
   const b = await startDaemon({ ...env(), portRange: { start: 19041, end: 19050 } });
   assert.notEqual(a.port, b.port);
   await a.stop(); await b.stop();
+});
+
+test('a non-loopback host is refused unless unsafeBind is set', async () => {
+  await assert.rejects(
+    () => startDaemon({ ...env(), host: '0.0.0.0', portRange: { start: 19051, end: 19060 } }),
+    /Refusing to bind/,
+  );
+});
+
+test('unsafeBind explicitly allows a non-loopback host', async () => {
+  const d = await startDaemon({
+    ...env(), host: '0.0.0.0', unsafeBind: true, portRange: { start: 19061, end: 19070 },
+  });
+  assert.equal(d.server.address().address, '0.0.0.0');
+  await d.stop();
+});
+
+test('a symlink inside uiDir cannot serve a file from outside it', async () => {
+  const e = env();
+  const outside = mkdtempSync(join(tmpdir(), 'ap-outside-'));
+  const secretPath = join(outside, 'secret.txt');
+  writeFileSync(secretPath, 'top secret');
+  symlinkSync(secretPath, join(e.uiDir, 'assets', 'escape.txt'));
+
+  const d = await startDaemon({ ...e, portRange: { start: 19071, end: 19080 } });
+  const auth = await fetch(`http://127.0.0.1:${d.port}/auth?token=${d.token}`, { redirect: 'manual' });
+  const cookie = auth.headers.get('set-cookie').split(';')[0];
+
+  const escaped = await fetch(`http://127.0.0.1:${d.port}/assets/escape.txt`, { headers: { cookie } });
+  assert.notEqual(escaped.status, 200);
+
+  const asset = await fetch(`http://127.0.0.1:${d.port}/assets/app.js`, { headers: { cookie } });
+  assert.equal(asset.status, 200);
+
+  await d.stop();
+});
+
+test('a second start against the same claudeDir is refused rather than orphaning the first', async () => {
+  const e = env();
+  const a = await startDaemon({ ...e, portRange: { start: 19081, end: 19090 } });
+  await assert.rejects(
+    () => startDaemon({ ...e, portRange: { start: 19091, end: 19100 } }),
+    /already (in progress|running)/,
+  );
+  await a.stop();
+  const b = await startDaemon({ ...e, portRange: { start: 19101, end: 19110 } });
+  await b.stop();
 });

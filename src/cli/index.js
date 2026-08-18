@@ -28,11 +28,19 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
     case 'start': {
       const live = readLiveRuntime();
       if (live) { log(`Already running on port ${live.port} (pid ${live.pid}).`); return 0; }
-      const daemon = await startDaemon({
-        claudeDir: claudeHome(),
-        projectRoot: process.cwd(),
-        uiDir: join(pkgRoot, 'dist', 'ui'),
-      });
+      let daemon;
+      try {
+        daemon = await startDaemon({
+          claudeDir: claudeHome(),
+          projectRoot: process.cwd(),
+          uiDir: join(pkgRoot, 'dist', 'ui'),
+        });
+      } catch (err) {
+        // startDaemon refuses a non-loopback bind and a racing second start on its own — surface
+        // that as a normal CLI error message rather than an unhandled rejection.
+        log(String(err?.message ?? err));
+        return 1;
+      }
       log(`agentpanel listening on http://127.0.0.1:${daemon.port}`);
       log(`Open: ${daemon.url}`);
       for (const signal of ['SIGINT', 'SIGTERM']) {
