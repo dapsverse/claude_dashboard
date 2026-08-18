@@ -1903,8 +1903,10 @@ const HOOK = fileURLToPath(new URL('../../hooks/agentpanel-hook.sh', import.meta
 
 function run(script, { stdin = '', env = {} }) {
   return new Promise((resolve) => {
+    let writeError;
     const child = execFile('bash', [script], { env: { ...process.env, ...env } },
-      (err, stdout, stderr) => resolve({ code: err?.code ?? 0, stdout, stderr }));
+      (err, stdout, stderr) => resolve({ code: err?.code ?? 0, stdout, stderr, writeError }));
+    child.stdin.on('error', (e) => { writeError = e.code ?? e.message; });
     child.stdin.end(stdin);
   });
 }
@@ -1949,6 +1951,16 @@ test('exits 0 and stays silent when no daemon.json exists', async () => {
   assert.equal(out.stdout, '');
 });
 
+test('drains a payload larger than the pipe buffer even with no daemon.json', async () => {
+  const cfg = fakeConfigDir({});
+  // 256 KB is comfortably past the ~64 KB pipe buffer. If the script exited before reading stdin,
+  // the writer would take an EPIPE here rather than completing.
+  const out = await run(HOOK, { stdin: `{"big":"${'x'.repeat(256 * 1024)}"}`, env: { CLAUDE_CONFIG_DIR: cfg } });
+  assert.equal(out.code, 0);
+  assert.equal(out.stdout, '');
+  assert.equal(out.writeError, undefined, 'the writer must not see EPIPE');
+});
+
 test('exits 0 when the recorded port refuses the connection', async () => {
   const cfg = fakeConfigDir({ port: 9, token: 'f'.repeat(64) });   // discard port, nothing listening
   const out = await run(HOOK, { stdin: '{"a":1}', env: { CLAUDE_CONFIG_DIR: cfg } });
@@ -1980,10 +1992,14 @@ Expected: FAIL — `hooks/agentpanel-hook.sh` does not exist.
 # stdout into the model's context, and a non-zero exit shows a hook error in the transcript.
 set -u
 
+# Drain stdin FIRST, before any early exit. Claude Code writes the payload to this script's stdin, and
+# exiting without reading it hands the writer an EPIPE once the payload exceeds the pipe buffer. The
+# most common state of all — daemon.json absent because the daemon has not started yet — must not be
+# the one that breaks the caller.
+payload="$(cat)"
+
 runtime="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agentpanel/daemon.json"
 [ -r "$runtime" ] || exit 0
-
-payload="$(cat)"
 [ -n "$payload" ] || exit 0
 
 port="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$runtime" | head -1)"
@@ -2127,6 +2143,17 @@ test('merge reports what it added and removed', () => {
   assert.equal(mergeHooks(result.hooks, DIR).removed.length, 5);
 });
 
+test('a foreign entry that is not a recognised group survives untouched', () => {
+  const bare = { SubagentStop: [{ type: 'command', command: '/foreign/script.sh' }] };
+  const { hooks } = mergeHooks(bare, DIR);
+  assert.ok(JSON.stringify(hooks.SubagentStop).includes('/foreign/script.sh'));
+});
+
+test('a malformed entry does not throw', () => {
+  assert.doesNotThrow(() => mergeHooks({ SubagentStop: [null] }, DIR));
+  assert.doesNotThrow(() => mergeHooks({ SubagentStop: [{ hooks: { not: 'an array' } }] }, DIR));
+});
+
 test('an event group left with no handlers is deleted, not left empty', () => {
   const ours = mergeHooks({}, DIR).hooks;
   const { hooks } = mergeHooks(ours, DIR, { remove: true });
@@ -2189,15 +2216,20 @@ export function mergeHooks(existing = {}, hooksDir, { remove = false } = {}) {
   const removed = [];
 
   for (const event of new Set([...Object.keys(hooks), ...Object.keys(fresh)])) {
+    // A group we do not recognise — a bare handler object, null, anything without a `hooks` array —
+    // belongs to the user or another tool. Pass it through untouched. Coercing it to an empty group
+    // would silently delete configuration we did not write, which is the one thing this must never do.
+    const isGroup = (g) => g && typeof g === 'object' && Array.isArray(g.hooks);
     const groups = (hooks[event] ?? [])
       .map((group) => {
-        const kept = (group.hooks ?? []).filter((h) => {
-          if (isOurs(h)) { removed.push(`${event}: ${h.command}`); return false; }
+        if (!isGroup(group)) return group;
+        const kept = group.hooks.filter((h) => {
+          if (isOurs(h)) { strippedAny = true; return false; }
           return true;
         });
         return { ...group, hooks: kept };
       })
-      .filter((group) => group.hooks.length > 0);
+      .filter((group) => !isGroup(group) || group.hooks.length > 0);
 
     if (!remove && fresh[event]) {
       groups.push(...structuredClone(fresh[event]));
@@ -2229,7 +2261,14 @@ export function runInit({ settingsPath, hooksDir, assumeYes = false, log = conso
   for (const gone of removed) log(`  - replacing stale entry ${gone}`);
   log('No other key in that file is touched.');
 
-  if (!assumeYes && confirm && !confirm()) { log('Aborted. Nothing was written.'); return { written: false }; }
+  // Default-deny. `confirm && !confirm()` would skip the gate entirely when no confirm callback is
+  // supplied, which means a caller that simply forgets it writes to the user's settings.json with no
+  // consent at all. The safe default for a file the user's whole setup depends on is to do nothing.
+  if (!assumeYes && (!confirm || !confirm())) {
+    log('');
+    log('Nothing was written. Re-run with --yes to apply these changes.');
+    return { written: false };
+  }
 
   if (existsSync(settingsPath)) copyFileSync(settingsPath, `${settingsPath}.agentpanel-backup`);
   mkdirSync(dirname(settingsPath), { recursive: true });
@@ -2342,6 +2381,13 @@ test('tolerates an unterminated block instead of throwing', () => {
   assert.deepEqual(data, {});
 });
 
+test('parses a header written with Windows line endings', () => {
+  const { data, body } = parseFrontmatter('---\r\nname: reviewer\r\ntools: [Read, Grep]\r\n---\r\nbody here');
+  assert.equal(data.name, 'reviewer');
+  assert.deepEqual(data.tools, ['Read', 'Grep']);
+  assert.equal(body.trim(), 'body here');
+});
+
 test('ignores comment lines and blank lines', () => {
   const { data } = parseFrontmatter('---\n# a comment\n\nname: x\n---\n');
   assert.deepEqual(data, { name: 'x' });
@@ -2375,7 +2421,10 @@ function unquote(v) {
 }
 
 export function parseFrontmatter(text) {
-  const src = String(text ?? '');
+  // Normalise line endings first. A file authored on Windows arrives with `\r\n`, and every line would
+  // then end in a `\r` that the key regex cannot match — the parser would return an empty object and
+  // silently lose the whole header rather than failing loudly.
+  const src = String(text ?? '').replace(/\r\n/g, '\n');
   if (!src.startsWith('---')) return { data: {}, body: src };
 
   const end = src.indexOf('\n---', 3);
