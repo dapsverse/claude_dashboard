@@ -12,7 +12,8 @@ export function createServer({ token, port, hub, routes }) {
   const server = createHttpServer((req, res) => {
     const boundPort = server.address()?.port ?? port;
     const url = new URL(req.url, `http://127.0.0.1:${boundPort}`);
-    const route = routes.find((r) => r.method === req.method && r.path === url.pathname);
+    const route = routes.find((r) => r.method === req.method && r.path === url.pathname)
+      ?? routes.find((r) => r.method === req.method && r.prefix !== undefined && url.pathname.startsWith(r.prefix));
 
     if (!route) return sendJson(res, 404, { error: 'not_found' });
 
