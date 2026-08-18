@@ -7,9 +7,19 @@
   "engines": { "node": ">=22.5.0" },
   "license": "MIT",
   "scripts": {
-    "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'"
+    "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'",
+    "test:ui": "vitest run --root ui",
+    "build:ui": "vite build --config ui/vite.config.js"
   },
   "files": ["bin", "src", "hooks", "dist"],
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
+  }
 }
