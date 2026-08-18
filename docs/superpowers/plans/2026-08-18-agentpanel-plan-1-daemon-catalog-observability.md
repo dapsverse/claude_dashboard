@@ -817,10 +817,19 @@ export function createServer({ token, port, hub, routes }) {
       return sendJson(res, 403, { error: 'bad_host' });
     }
 
-    try {
-      route.handler(req, res, { token, port: boundPort, hub, url });
-    } catch (err) {
+    const fail = (err) => {
+      if (res.headersSent) return res.destroy();
       sendJson(res, 500, { error: 'handler_failed', detail: String(err?.message ?? err) });
+    };
+
+    try {
+      // An async handler never throws synchronously — a later throw arrives as a rejected promise,
+      // which Node's default --unhandled-rejections=throw turns into process death. Catching the
+      // returned promise here is what keeps one malformed request from taking the daemon down.
+      const result = route.handler(req, res, { token, port: boundPort, hub, url });
+      if (result && typeof result.catch === 'function') result.catch(fail);
+    } catch (err) {
+      fail(err);
     }
   });
 
@@ -884,6 +893,32 @@ test('leaves ordinary prose and short hex alone', () => {
   assert.equal(redact(s), s);
 });
 
+test('redacts a private key whose capture was cut off before the END marker', () => {
+  const body = `MIIEowIBAAKCAQEA${'a1b2/c3d4e5f6'.repeat(6)}zzXyQ9`;
+  const truncated = `-----BEGIN RSA PRIVATE KEY-----\n${body}\n`;
+  const out = redact(truncated);
+  assert.ok(!out.includes('a1b2'), 'key body must not survive a missing END marker');
+});
+
+test('redacts a long opaque blob that no word boundary can isolate', () => {
+  const blob = `MIIEowIBAAKCAQEA${'a1b2c3d4e5f6'.repeat(6)}zzXyQ9`;
+  assert.equal(redact(blob), REDACTED);
+});
+
+test('keeps ordinary filesystem paths, which are long but not secret', () => {
+  const path = '/Users/someone/Documents/agentpanel/src/store/runs.js';
+  assert.equal(redact(path), path);
+});
+
+test('keeps long identifiers that lack the character mix of encoded key material', () => {
+  const camel = 'thisIsAVeryLongCamelCaseIdentifierNameThatKeepsGoingAndGoingForever';
+  const plain = 'p'.repeat(60);
+  const snake = 'this_is_a_very_long_snake_case_identifier_that_keeps_going_and_going';
+  assert.equal(redact(camel), camel);
+  assert.equal(redact(plain), plain);
+  assert.equal(redact(snake), snake);
+});
+
 test('is null-safe', () => {
   assert.equal(redact(undefined), '');
   assert.equal(redact(null), '');
@@ -913,12 +948,23 @@ export const REDACTED = '[redacted]';
 
 const PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  // A capture cut off before its END marker — truncated tool output, a killed subprocess, a log line
+  // clipped mid-stream. Without this, the pattern above does not match at all and the key body below
+  // is persisted verbatim. Runs to end of input deliberately: everything after BEGIN is key material.
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g,
   /sk-ant-[A-Za-z0-9_-]{16,}/g,
   /sk-[A-Za-z0-9]{20,}/g,
   /gh[pousr]_[A-Za-z0-9]{20,}/g,
   /AKIA[0-9A-Z]{16}/g,
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,   // JWT
+  // Long opaque blobs: base64 key bodies, long tokens. `\b` is useless here — a hex run embedded in a
+  // base64 blob has word characters on both sides, so no word boundary exists to anchor on. Two
+  // narrowings keep this from eating ordinary text: `/` is excluded from the class, so filesystem paths
+  // survive into previews, and the lookaheads require the run to mix lower, upper, and digits the way
+  // encoded key material does. Without them a 60-character camelCase identifier or any long unbroken
+  // word is destroyed, which makes previews useless for the sake of a secret that was never there.
+  /(?<![A-Za-z0-9+=])(?=[A-Za-z0-9+]{60,})(?=[A-Za-z0-9+]*[a-z])(?=[A-Za-z0-9+]*[A-Z])(?=[A-Za-z0-9+]*[0-9])[A-Za-z0-9+]{60,}={0,2}(?![A-Za-z0-9+=])/g,
   /\b[0-9a-fA-F]{40,}\b/g,                                            // seeds, long digests
 ];
 
@@ -1012,8 +1058,26 @@ test('open is idempotent — a replayed hook does not duplicate or reset the row
 
 test('closing an unknown id is a silent no-op', () => {
   const runs = createRunsRepo(fresh());
-  runs.close({ id: 'ghost', status: 'done', endedAt: 1 });
+  assert.equal(runs.close({ id: 'ghost', status: 'done', endedAt: 1 }), false);
   assert.equal(runs.get('ghost'), null);
+});
+
+test('a replayed close reports no transition and does not alter the row', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  assert.equal(runs.close({ id: 's1:t1', status: 'done', endedAt: 3000, resultPreview: 'ok' }), true);
+  assert.equal(runs.close({ id: 's1:t1', status: 'error', endedAt: 9999, resultPreview: 'CHANGED' }), false);
+  const row = runs.get('s1:t1');
+  assert.equal(row.status, 'done');
+  assert.equal(row.endedAt, 3000);
+  assert.equal(row.resultPreview, 'ok');
+});
+
+test('a backwards clock cannot store a negative duration', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open({ ...baseRun, id: 'back', startedAt: 5000 });
+  runs.close({ id: 'back', status: 'done', endedAt: 1000 });
+  assert.equal(runs.get('back').durationMs, 0);
 });
 
 test('listActive returns only running rows, newest first', () => {
@@ -1125,7 +1189,18 @@ export function openDb(path) {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
   chmodSync(path, 0o600);
+  restrictSidecars(path);
   return db;
+}
+
+// WAL leaves `-wal` and `-shm` beside the database, and SQLite creates them under the process umask
+// rather than copying the database's mode. They hold the same prompts and tool output as the database
+// itself until a checkpoint. The 0700 state directory is the real control — no other user can traverse
+// into it — but matching the modes costs nothing and removes the discrepancy.
+export function restrictSidecars(path) {
+  for (const suffix of ['-wal', '-shm']) {
+    try { chmodSync(`${path}${suffix}`, 0o600); } catch { /* not created yet, or already gone */ }
+  }
 }
 ```
 
@@ -1163,9 +1238,13 @@ export function createRunsRepo(db) {
     close({ id, status, endedAt, durationMs, resultPreview }) {
       const row = getStmt.get(id);
       if (!row) return false;
-      const duration = durationMs ?? (endedAt - row.started_at);
-      closeStmt.run(status, endedAt, duration, resultPreview ?? null, id);
-      return true;
+      // A clock step backwards (NTP correction, VM resume) must not store a negative duration.
+      const duration = durationMs ?? Math.max(0, endedAt - row.started_at);
+      const result = closeStmt.run(status, endedAt, duration, resultPreview ?? null, id);
+      // Report the state transition, not merely the row's existence: the UPDATE is guarded by
+      // `status = 'running'`, so a replayed close changes nothing and must not make the caller
+      // broadcast a second run.close for a run that already finished.
+      return result.changes > 0;
     },
     enrich({ sessionId, agentType }, { transcriptPath, resultPreview }) {
       const hit = oldestMatchStmt.get(sessionId, agentType);
@@ -1576,6 +1655,16 @@ test('an oversized body is rejected', async () => {
   server.close();
 });
 
+test('a wrong-typed field is refused without taking the daemon down', async () => {
+  const { server, post } = await boot();
+  const res = await post({ hook_event_name: 'Notification', session_id: 's1', cwd: {} });
+  assert.equal(res.status, 500);
+  assert.deepEqual(Object.keys(await res.json()).sort(), ['detail', 'error']);
+  const still = await post({ ...pre });
+  assert.equal(still.status, 200, 'the daemon is still serving after the bad payload');
+  server.close();
+});
+
 test('an unknown event is accepted but changes no runs', async () => {
   const { server, runs, post } = await boot();
   const res = await post({ hook_event_name: 'Notification', session_id: 's9', cwd: '/p' });
@@ -1642,15 +1731,33 @@ function json(res, status, body) {
 
 function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
+    let settled = false;
     let size = 0;
     const chunks = [];
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > limit) { reject(Object.assign(new Error('too_large'), { code: 'TOO_LARGE' })); req.destroy(); return; }
-      chunks.push(c);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+
+    const onData = (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        // Stop consuming without tearing down the socket: the response still needs
+        // to go out on it. Dropping the 'data' listener pauses the stream, so the
+        // rest of an oversized payload is never buffered into memory.
+        settled = true;
+        req.removeListener('data', onData);
+        req.removeListener('end', onEnd);
+        reject(Object.assign(new Error('too_large'), { code: 'TOO_LARGE' }));
+        return;
+      }
+      chunks.push(chunk);
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    };
+
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', (err) => { if (!settled) { settled = true; reject(err); } });
   });
 }
 
@@ -1691,15 +1798,28 @@ export function hooksRoute({ runs, sessions, hub, now = Date.now }) {
     handler: async (req, res) => {
       let raw;
       try { raw = await readBody(req); }
-      catch (err) { return json(res, err.code === 'TOO_LARGE' ? 413 : 400, { error: 'bad_body' }); }
+      catch (err) {
+        // `connection: close` lets Node finish the response and then close the socket normally.
+        // Without it the half-read request keeps the handle alive and the process never exits.
+        res.setHeader('connection', 'close');
+        return json(res, err.code === 'TOO_LARGE' ? 413 : 400, { error: 'bad_body' });
+      }
 
       let event;
       try { event = JSON.parse(raw); }
       catch { return json(res, 400, { error: 'bad_json' }); }
 
-      const actions = planActions(event, { now: now() });
-      applyActions(actions, { runs, sessions, hub });
-      json(res, 200, { ok: true, actions: actions.length });
+      // A well-formed event with one wrong-typed leaf field — `cwd: {}` is enough — reaches the
+      // store and throws there. Answer 500 rather than letting it escape: this endpoint is fed by
+      // hook scripts on every Agent tool call, and a daemon that dies on one bad payload is worse
+      // than a daemon that refuses one bad payload.
+      try {
+        const actions = planActions(event, { now: now() });
+        applyActions(actions, { runs, sessions, hub });
+        json(res, 200, { ok: true, actions: actions.length });
+      } catch (err) {
+        json(res, 500, { error: 'apply_failed', detail: String(err?.message ?? err) });
+      }
     },
   };
 }
