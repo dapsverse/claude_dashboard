@@ -12,8 +12,10 @@ const HOOK = fileURLToPath(new URL('../../hooks/agentpanel-hook.sh', import.meta
 
 function run(script, { stdin = '', env = {} }) {
   return new Promise((resolve) => {
+    let writeError;
     const child = execFile('bash', [script], { env: { ...process.env, ...env } },
-      (err, stdout, stderr) => resolve({ code: err?.code ?? 0, stdout, stderr }));
+      (err, stdout, stderr) => resolve({ code: err?.code ?? 0, stdout, stderr, writeError }));
+    child.stdin.on('error', (e) => { writeError = e.code ?? e.message; });
     child.stdin.end(stdin);
   });
 }
@@ -72,4 +74,14 @@ test('exits 0 on a corrupt daemon.json', async () => {
   const out = await run(HOOK, { stdin: '{"a":1}', env: { CLAUDE_CONFIG_DIR: dir } });
   assert.equal(out.code, 0);
   assert.equal(out.stdout, '');
+});
+
+test('drains a payload larger than the pipe buffer even with no daemon.json', async () => {
+  const cfg = fakeConfigDir({});
+  // 256 KB is comfortably past the ~64 KB pipe buffer. If the script exited before reading stdin,
+  // the writer would take an EPIPE here rather than completing.
+  const out = await run(HOOK, { stdin: `{"big":"${'x'.repeat(256 * 1024)}"}`, env: { CLAUDE_CONFIG_DIR: cfg } });
+  assert.equal(out.code, 0);
+  assert.equal(out.stdout, '');
+  assert.equal(out.writeError, undefined, 'the writer must not see EPIPE');
 });

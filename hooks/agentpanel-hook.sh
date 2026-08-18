@@ -4,10 +4,14 @@
 # stdout into the model's context, and a non-zero exit shows a hook error in the transcript.
 set -u
 
+# Drain stdin FIRST, before any early exit. Claude Code writes the payload to this script's stdin, and
+# exiting without reading it hands the writer an EPIPE once the payload exceeds the pipe buffer. The
+# most common state of all — daemon.json absent because the daemon has not started yet — must not be
+# the one that breaks the caller.
+payload="$(cat)"
+
 runtime="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agentpanel/daemon.json"
 [ -r "$runtime" ] || exit 0
-
-payload="$(cat)"
 [ -n "$payload" ] || exit 0
 
 port="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$runtime" | head -1)"
