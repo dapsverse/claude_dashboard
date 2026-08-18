@@ -1,0 +1,19 @@
+{
+    "session_id": "e4c28e67-99d2-431f-bb70-e6172b8c31f2",
+    "transcript_path": "/home/testuser/.claude/projects/-private-var-folders-v1-c90hsh052p5fvv78s48-78840000gn-T-tmp-9zch7WLj1l/e4c28e67-99d2-431f-bb70-e6172b8c31f2.jsonl",
+    "cwd": "/private/var/folders/v1/c90hsh052p5fvv78s48_78840000gn/T/tmp.9zch7WLj1l",
+    "prompt_id": "5fa9871e-7853-464e-bdcd-28c8804face5",
+    "permission_mode": "default",
+    "effort": {
+        "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+        "description": "Echo hello",
+        "prompt": "test prompt",
+        "subagent_type": "Explore",
+        "run_in_background": false
+    },
+    "tool_use_id": "toolu_01WTQs8ynPa4PA2s2S8PmajR"
+}
