@@ -59,3 +59,12 @@ test('keeps ordinary filesystem paths, which are long but not secret', () => {
   const path = '/Users/someone/Documents/agentpanel/src/store/runs.js';
   assert.equal(redact(path), path);
 });
+
+test('keeps long identifiers that lack the character mix of encoded key material', () => {
+  const camel = 'thisIsAVeryLongCamelCaseIdentifierNameThatKeepsGoingAndGoingForever';
+  const plain = 'p'.repeat(60);
+  const snake = 'this_is_a_very_long_snake_case_identifier_that_keeps_going_and_going';
+  assert.equal(redact(camel), camel);
+  assert.equal(redact(plain), plain);
+  assert.equal(redact(snake), snake);
+});

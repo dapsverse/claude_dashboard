@@ -13,10 +13,12 @@ const PATTERNS = [
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,   // JWT
   // Long opaque blobs: base64 key bodies, long tokens. `\b` is useless here — a hex run embedded in a
-  // base64 blob has word characters on both sides, so no word boundary exists to anchor on. `/` is
-  // excluded from the class so that ordinary filesystem paths, which are longer than 60 characters far
-  // more often than they are secret, survive into previews.
-  /(?<![A-Za-z0-9+=])[A-Za-z0-9+]{60,}={0,2}(?![A-Za-z0-9+=])/g,
+  // base64 blob has word characters on both sides, so no word boundary exists to anchor on. Two
+  // narrowings keep this from eating ordinary text: `/` is excluded from the class, so filesystem paths
+  // survive into previews, and the lookaheads require the run to mix lower, upper, and digits the way
+  // encoded key material does. Without them a 60-character camelCase identifier or any long unbroken
+  // word is destroyed, which makes previews useless for the sake of a secret that was never there.
+  /(?<![A-Za-z0-9+=])(?=[A-Za-z0-9+]{60,})(?=[A-Za-z0-9+]*[a-z])(?=[A-Za-z0-9+]*[A-Z])(?=[A-Za-z0-9+]*[0-9])[A-Za-z0-9+]{60,}={0,2}(?![A-Za-z0-9+=])/g,
   /\b[0-9a-fA-F]{40,}\b/g,                                            // seeds, long digests
 ];
 
