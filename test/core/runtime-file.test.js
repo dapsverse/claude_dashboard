@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, statSync } from 'node:fs';
+import { mkdtempSync, statSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { writeRuntime, readRuntime, readLiveRuntime, clearRuntime, isAlive } from '../../src/core/runtime-file.js';
 
 const file = () => join(mkdtempSync(join(tmpdir(), 'ap-')), 'nested', 'daemon.json');
@@ -16,6 +16,21 @@ test('writes 0600 and reads back', () => {
 
 test('readRuntime returns null for missing or corrupt files', () => {
   assert.equal(readRuntime('/nonexistent/daemon.json'), null);
+  const f = file();
+  mkdirSync(dirname(f), { recursive: true });
+  writeFileSync(f, 'not json at all');
+  assert.equal(readRuntime(f), null);
+});
+
+test('readRuntime rethrows a permission error instead of reporting no daemon', { skip: process.getuid?.() === 0 }, () => {
+  const f = file();
+  writeRuntime({ pid: process.pid, port: 8888, token: 'abc', startedAt: 1, version: '0.1.0' }, f);
+  chmodSync(f, 0o000);
+  try {
+    assert.throws(() => readRuntime(f), (e) => e.code === 'EACCES' || e.code === 'EPERM');
+  } finally {
+    chmodSync(f, 0o600);
+  }
 });
 
 test('readLiveRuntime returns null when the pid is dead', () => {

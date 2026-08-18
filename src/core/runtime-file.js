@@ -11,7 +11,15 @@ export function writeRuntime(info, file = runtimeFilePath()) {
 }
 
 export function readRuntime(file = runtimeFilePath()) {
-  try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    // A missing or corrupt file legitimately means "no daemon". Anything else — a permission
+    // problem above all — must surface: swallowing it would report "not running" for a daemon
+    // that is very much running, and `start` would launch a second one alongside it.
+    if (err?.code === 'ENOENT' || err instanceof SyntaxError) return null;
+    throw err;
+  }
 }
 
 export function isAlive(pid) {
