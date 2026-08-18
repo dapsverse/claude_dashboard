@@ -109,6 +109,16 @@ test('GET /api/runs returns active and recent', async () => {
   server.close();
 });
 
+test('a wrong-typed field is refused without taking the daemon down', async () => {
+  const { server, post } = await boot();
+  const res = await post({ hook_event_name: 'Notification', session_id: 's1', cwd: {} });
+  assert.equal(res.status, 500);
+  assert.deepEqual(Object.keys(await res.json()).sort(), ['detail', 'error']);
+  const still = await post({ ...pre });
+  assert.equal(still.status, 200, 'the daemon is still serving after the bad payload');
+  server.close();
+});
+
 test('the sweeper stales an abandoned run and broadcasts it', async () => {
   const { server, runs, post, events } = await boot();
   await post(pre);

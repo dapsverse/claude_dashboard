@@ -23,10 +23,19 @@ export function createServer({ token, port, hub, routes }) {
       return sendJson(res, 403, { error: 'bad_host' });
     }
 
-    try {
-      route.handler(req, res, { token, port: boundPort, hub, url });
-    } catch (err) {
+    const fail = (err) => {
+      if (res.headersSent) return res.destroy();
       sendJson(res, 500, { error: 'handler_failed', detail: String(err?.message ?? err) });
+    };
+
+    try {
+      // An async handler never throws synchronously — a later throw arrives as a rejected promise,
+      // which Node's default --unhandled-rejections=throw turns into process death. Catching the
+      // returned promise here is what keeps one malformed request from taking the daemon down.
+      const result = route.handler(req, res, { token, port: boundPort, hub, url });
+      if (result && typeof result.catch === 'function') result.catch(fail);
+    } catch (err) {
+      fail(err);
     }
   });
 

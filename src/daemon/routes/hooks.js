@@ -92,9 +92,17 @@ export function hooksRoute({ runs, sessions, hub, now = Date.now }) {
       try { event = JSON.parse(raw); }
       catch { return json(res, 400, { error: 'bad_json' }); }
 
-      const actions = planActions(event, { now: now() });
-      applyActions(actions, { runs, sessions, hub });
-      json(res, 200, { ok: true, actions: actions.length });
+      // A well-formed event with one wrong-typed leaf field — `cwd: {}` is enough — reaches the
+      // store and throws there. Answer 500 rather than letting it escape: this endpoint is fed by
+      // hook scripts on every Agent tool call, and a daemon that dies on one bad payload is worse
+      // than a daemon that refuses one bad payload.
+      try {
+        const actions = planActions(event, { now: now() });
+        applyActions(actions, { runs, sessions, hub });
+        json(res, 200, { ok: true, actions: actions.length });
+      } catch (err) {
+        json(res, 500, { error: 'apply_failed', detail: String(err?.message ?? err) });
+      }
     },
   };
 }
