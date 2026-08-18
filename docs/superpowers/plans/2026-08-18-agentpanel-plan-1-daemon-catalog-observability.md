@@ -475,7 +475,11 @@ export function acquireStartLock(file = `${runtimeFilePath()}.lock`) {
       return () => rmSync(file, { force: true });
     } catch (err) {
       if (err?.code !== 'EEXIST') throw err;
-      const holder = Number(readFileSync(file, 'utf8').trim());
+      // The holder may release the lock between our failed create and this read. That is the lock
+      // working, not failing — loop round and take it rather than surfacing a raw ENOENT.
+      let holder;
+      try { holder = Number(readFileSync(file, 'utf8').trim()); }
+      catch (readErr) { if (readErr?.code === 'ENOENT') continue; throw readErr; }
       if (isAlive(holder)) return null;      // someone else is genuinely starting or running
       rmSync(file, { force: true });         // stale lock from a killed process; take it over
     }
@@ -3303,7 +3307,9 @@ Expected: FAIL — the components do not exist.
 ```jsx
 // ui/src/components/RunRow.jsx
 export function formatElapsed(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
+  // A run with a missing startedAt yields NaN here, and `NaN` formats as the literal string
+  // "NaNhNaNm" on screen. A dashboard that displays that has failed at its one job.
+  const total = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
   if (total < 60) return `${total}s`;
   const minutes = Math.floor(total / 60);
   if (minutes < 60) return `${minutes}m${String(total % 60).padStart(2, '0')}s`;
@@ -3340,7 +3346,10 @@ export function LiveRail({ runs, now }) {
   const ordered = [...runs].sort((a, b) => rank(a) - rank(b) || b.startedAt - a.startedAt);
 
   return (
-    <aside className="rail" aria-label="Live agents">
+    // aria-live: the whole point of this panel is that it changes while the user watches it. Without
+    // it, a screen-reader user is told the rail exists once and never hears that anything started,
+    // finished, or failed.
+    <aside className="rail" aria-label="Live agents" aria-live="polite" aria-relevant="additions removals">
       <h2>Live agents</h2>
       {ordered.length === 0
         ? <p className="empty">No agents running. Dispatch one from any Claude Code session and it appears here.</p>
