@@ -29,7 +29,10 @@
   - `PostToolUse`: `+ hook_event_name: 'PostToolUse'`, `tool_name: string`, `tool_input: unknown`, `tool_response: unknown`, `tool_use_id: string`, `duration_ms?: number`
   - `SubagentStop`: `+ hook_event_name: 'SubagentStop'`, `agent_id: string`, `agent_type: string`, `agent_transcript_path: string`, `stop_hook_active: boolean`, `last_assistant_message?: string`
   - `SessionEnd`: `+ hook_event_name: 'SessionEnd'`
-  - For `tool_name === 'Task'`, `tool_input` has `subagent_type: string`, `description: string`, `prompt: string`
+  - The subagent-dispatch tool is named **`Agent`** on CLI 2.1.234 (verified by captured fixture). Older and
+    other builds name it `Task`, and `toolAliases` can rename it, so treat `AGENT_TOOL_NAMES = ['Agent', 'Task']`
+    as the set. Its `tool_input` has `subagent_type: string`, `description: string`, `prompt: string`, and
+    optionally `run_in_background: boolean`
 
 ---
 
@@ -114,8 +117,9 @@ chmod +x tools/capture-fixtures.sh
 - [ ] **Step 2: Run it and inspect what arrived**
 
 Run: `./tools/capture-fixtures.sh`
-Expected: five JSON files. Confirm by eye that `pre-tool-use-task.json` contains `tool_use_id`, `tool_name: "Task"`,
-and `tool_input.subagent_type`; that `post-tool-use-task.json` contains the same `tool_use_id` plus `tool_response`.
+Expected: five JSON files. Confirm by eye that `pre-tool-use-task.json` contains `tool_use_id`,
+`tool_name` (`"Agent"` on CLI 2.1.234), and `tool_input.subagent_type`; that `post-tool-use-task.json`
+contains the same `tool_use_id` plus `tool_response`.
 
 - [ ] **Step 3: Copy fixtures in, redacting local paths**
 
@@ -1205,7 +1209,8 @@ most likely to be wrong, so it must be the easiest to test.
 
 **Interfaces:**
 - Consumes: `preview` from Task 6.
-- Produces: `runId(sessionId, toolUseId) => string`, `extractText(toolResponse) => string`,
+- Produces: `AGENT_TOOL_NAMES` (a `Set` of `'Agent'` and `'Task'`), `isAgentDispatch(toolName) => boolean`,
+  `runId(sessionId, toolUseId) => string`, `extractText(toolResponse) => string`,
   `isErrorResponse(toolResponse) => boolean`, `planActions(event, { now }) => Action[]`.
 - Action union — later tasks switch on `type`:
   - `{ type: 'session.touch', session: { id, projectPath, source, at } }`
@@ -1221,14 +1226,14 @@ most likely to be wrong, so it must be the easiest to test.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { planActions, runId, isErrorResponse, extractText } from '../../src/core/correlator.js';
+import { planActions, runId, isErrorResponse, extractText, isAgentDispatch } from '../../src/core/correlator.js';
 
 const NOW = 1_700_000_000_000;
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../fixtures/hooks/${name}.json`, import.meta.url)));
 
 const pre = {
   hook_event_name: 'PreToolUse', session_id: 's1', cwd: '/proj', transcript_path: '/t.jsonl',
-  tool_name: 'Task', tool_use_id: 'tu_1',
+  tool_name: 'Agent', tool_use_id: 'tu_1',
   tool_input: { subagent_type: 'programmer', description: 'add auth', prompt: 'do the thing' },
 };
 
@@ -1237,7 +1242,19 @@ test('every event touches its session', () => {
   assert.deepEqual(a, { type: 'session.touch', session: { id: 's1', projectPath: '/proj', source: 'terminal', at: NOW } });
 });
 
-test('PreToolUse[Task] opens a run keyed by session and tool_use_id', () => {
+test('the dispatch tool is recognised under both of its names', () => {
+  assert.equal(isAgentDispatch('Agent'), true);
+  assert.equal(isAgentDispatch('Task'), true);
+  assert.equal(isAgentDispatch('Bash'), false);
+  assert.equal(isAgentDispatch(undefined), false);
+});
+
+test('a Task-named dispatch still opens a run', () => {
+  const actions = planActions({ ...pre, tool_name: 'Task' }, { now: NOW });
+  assert.equal(actions.some((a) => a.type === 'run.open'), true);
+});
+
+test('PreToolUse[Agent] opens a run keyed by session and tool_use_id', () => {
   const actions = planActions(pre, { now: NOW });
   const open = actions.find((a) => a.type === 'run.open');
   assert.deepEqual(open.run, {
@@ -1246,12 +1263,12 @@ test('PreToolUse[Task] opens a run keyed by session and tool_use_id', () => {
   });
 });
 
-test('PreToolUse for a non-Task tool opens nothing', () => {
+test('PreToolUse for a non-dispatch tool opens nothing', () => {
   const actions = planActions({ ...pre, tool_name: 'Bash', tool_input: { command: 'ls' } }, { now: NOW });
   assert.equal(actions.some((a) => a.type === 'run.open'), false);
 });
 
-test('PostToolUse[Task] closes the same id', () => {
+test('PostToolUse[Agent] closes the same id', () => {
   const evt = { ...pre, hook_event_name: 'PostToolUse', tool_response: 'all good', duration_ms: 4321 };
   const close = planActions(evt, { now: NOW }).find((a) => a.type === 'run.close');
   assert.deepEqual(close.close, {
@@ -1333,6 +1350,12 @@ Expected: FAIL — module not found.
 // src/core/correlator.js
 import { preview } from './redact.js';
 
+// The subagent-dispatch tool is `Agent` on CLI 2.1.234 and `Task` on other builds; `toolAliases`
+// can also rename it. Recognise the whole set rather than one build's spelling.
+export const AGENT_TOOL_NAMES = new Set(['Agent', 'Task']);
+
+export function isAgentDispatch(toolName) { return AGENT_TOOL_NAMES.has(toolName); }
+
 export function runId(sessionId, toolUseId) { return `${sessionId}:${toolUseId}`; }
 
 export function extractText(toolResponse) {
@@ -1364,7 +1387,7 @@ export function planActions(event, { now }) {
 
   switch (event.hook_event_name) {
     case 'PreToolUse':
-      if (event.tool_name === 'Task' && event.tool_use_id) {
+      if (isAgentDispatch(event.tool_name) && event.tool_use_id) {
         actions.push({
           type: 'run.open',
           run: {
@@ -1380,7 +1403,7 @@ export function planActions(event, { now }) {
       break;
 
     case 'PostToolUse':
-      if (event.tool_name === 'Task' && event.tool_use_id) {
+      if (isAgentDispatch(event.tool_name) && event.tool_use_id) {
         actions.push({
           type: 'run.close',
           close: {
@@ -1491,11 +1514,11 @@ async function boot() {
 
 const pre = {
   hook_event_name: 'PreToolUse', session_id: 's1', cwd: '/proj',
-  tool_name: 'Task', tool_use_id: 'tu_1',
+  tool_name: 'Agent', tool_use_id: 'tu_1',
   tool_input: { subagent_type: 'qa', description: 'write tests', prompt: 'p' },
 };
 
-test('a PreToolUse[Task] post creates a running row and broadcasts it', async () => {
+test('a PreToolUse[Agent] post creates a running row and broadcasts it', async () => {
   const { server, runs, post, events } = await boot();
   const res = await post(pre);
   assert.equal(res.status, 200);
@@ -1888,8 +1911,9 @@ Writes to the user's `~/.claude/settings.json`. Print the plan, then write — n
   - `mergeHooks(existing, hooksDir) => { hooks, added, removed }` — pure; strips our old entries, appends fresh
     ones, leaves every foreign entry untouched.
   - `runInit({ settingsPath, hooksDir, write, log })` and `runUninstall({ settingsPath, stateDir, write, log })`.
-- Hook registration produced by `hookEntries`, with the verified semantics: `matcher: 'Task'` is an
-  exact-string match; `async: true` runs the handler without blocking; `timeout` is in **seconds**.
+- Hook registration produced by `hookEntries`, with the verified semantics: `matcher: 'Agent|Task'` takes
+  Claude Code's exact-string-list path (letters and `|` only), so it matches both spellings of the dispatch
+  tool and nothing else; `async: true` runs the handler without blocking; `timeout` is in **seconds**.
   `SessionEnd` gets `timeout: 2` because those hooks share a 1.5-second budget and a per-hook timeout is what
   raises it.
 
@@ -1912,10 +1936,10 @@ test('registers all five events', () => {
     ['PostToolUse', 'PreToolUse', 'SessionEnd', 'SessionStart', 'SubagentStop']);
 });
 
-test('Task events use an exact-string matcher', () => {
+test('dispatch events match both tool names via the exact-string list matcher', () => {
   const h = hookEntries(DIR);
-  assert.equal(h.PreToolUse[0].matcher, 'Task');
-  assert.equal(h.PostToolUse[0].matcher, 'Task');
+  assert.equal(h.PreToolUse[0].matcher, 'Agent|Task');
+  assert.equal(h.PostToolUse[0].matcher, 'Agent|Task');
 });
 
 test('every handler is async and short-timeout, and SessionEnd fits its 1.5s budget', () => {
@@ -2001,8 +2025,10 @@ export function hookEntries(hooksDir) {
     // No matcher: SessionStart matchers filter on `source` (startup|resume|clear|compact|fork)
     // and agentpanel wants the daemon up for all of them.
     SessionStart: [{ hooks: [handler(hooksDir, 'agentpanel-bootstrap.sh', 5), forward()] }],
-    PreToolUse:   [{ matcher: 'Task', hooks: [forward()] }],
-    PostToolUse:  [{ matcher: 'Task', hooks: [forward()] }],
+    // `Agent|Task` contains only letters and `|`, so Claude Code takes the exact-string-list path,
+    // not the regex path: it matches the tool named exactly `Agent` or exactly `Task`, nothing else.
+    PreToolUse:   [{ matcher: 'Agent|Task', hooks: [forward()] }],
+    PostToolUse:  [{ matcher: 'Agent|Task', hooks: [forward()] }],
     SubagentStop: [{ hooks: [forward()] }],
     // SessionEnd hooks share a 1.5s budget; a per-hook timeout raises it, so keep it tight.
     SessionEnd:   [{ hooks: [forward(2)] }],
@@ -3492,7 +3518,7 @@ test('a dispatched subagent appears and then completes, end to end', async () =>
     claudeDir, projectRoot: claudeDir, uiDir, portRange: { start: 19100, end: 19150 },
   });
 
-  const base = { session_id: 'e2e', cwd: '/proj', tool_name: 'Task', tool_use_id: 'tu_e2e' };
+  const base = { session_id: 'e2e', cwd: '/proj', tool_name: 'Agent', tool_use_id: 'tu_e2e' };
   const get = async () => {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`,
       { headers: { authorization: `Bearer ${daemon.token}` } });

@@ -60,6 +60,9 @@ Non-English UI. Support for harnesses other than Claude Code.
   `sessionId`, `cwd`, `gitBranch`, `isSidechain`, `parentUuid`, `uuid`, `timestamp`, `version`.
   `isSidechain: true` marks subagent traffic — the fallback signal if hooks are unavailable.
 - Port 8888 free at time of probe.
+- The subagent-dispatch tool is named `Agent` on CLI 2.1.234 (confirmed by live fixture capture on
+  2026-08-18, not by documentation). Other builds name it `Task`, and `toolAliases` can rename it, so both
+  names are treated as the dispatch tool throughout.
 - Hook input schemas are shipped as types in the SDK package (`sdk.d.ts`, `claudeCodeVersion: 2.1.234`).
   Verified: `BaseHookInput` = `session_id`, `transcript_path`, `cwd`, `prompt_id?`, `permission_mode?`,
   `agent_id?`, `agent_type?`, `effort?`. `PreToolUseHookInput` adds `tool_name`, `tool_input`,
@@ -114,9 +117,9 @@ Hooks installed by `init`:
 | Event | Matcher | Purpose |
 |---|---|---|
 | `SessionStart` | — | bootstrap daemon, register session |
-| `PreToolUse` | `Task` | open an `AgentRun` keyed by `(session_id, tool_use_id)` |
+| `PreToolUse` | `Agent\|Task` | open an `AgentRun` keyed by `(session_id, tool_use_id)` |
 | `SubagentStart` | — | record subagent lifecycle; enrichment only |
-| `PostToolUse` | `Task` | close the `AgentRun` |
+| `PostToolUse` | `Agent\|Task` | close the `AgentRun` |
 | `SubagentStop` | — | backstop close |
 | `SessionEnd` | — | mark session ended, sweep its open runs |
 
@@ -140,12 +143,12 @@ of truth; a cache that can disagree with it would be a bug generator.
 `PostToolUseHookInput` (verified in the shipped SDK types), so correlation is exact — `(session_id,
 tool_use_id)` is the primary key for a run, and no heuristic matching is needed. `SubagentStart` /
 `SubagentStop` supply `agent_id` and `agent_type` and are the authoritative open/close signals; the
-`PreToolUse[Task]` payload enriches the run with the dispatch `description` and `prompt` from `tool_input`,
+`PreToolUse[Agent]` payload enriches the run with the dispatch `description` and `prompt` from `tool_input`,
 and `PostToolUse[Task]` supplies `tool_response` and `duration_ms` for the result preview.
 
 The two signal pairs cannot be joined. `SubagentStartHookInput` carries `agent_id` but no `tool_use_id`,
 and the `agent_id` on a `PreToolUse[Task]` payload identifies the *parent* context, not the subagent about to
-start. Rather than invent a correlation that the data does not support, the Task tool events are the single
+start. Rather than invent a correlation that the data does not support, the dispatch tool's events are the single
 primary source of runs: they carry `tool_use_id` for exact pairing, `tool_input.subagent_type`,
 `tool_input.description`, and `tool_input.prompt` on open, and `tool_response` plus `duration_ms` on close.
 
