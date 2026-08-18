@@ -164,7 +164,7 @@ git commit -m "test: capture real hook payload fixtures"
   "engines": { "node": ">=22.5.0" },
   "license": "MIT",
   "scripts": {
-    "test": "node --test --disable-warning=ExperimentalWarning test/**/*.test.js"
+    "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'"
   },
   "files": ["bin", "src", "hooks", "dist"],
   "dependencies": {},
