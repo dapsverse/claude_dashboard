@@ -463,6 +463,25 @@ export function readLiveRuntime(file = runtimeFilePath()) {
 export function clearRuntime(file = runtimeFilePath()) {
   rmSync(file, { force: true });
 }
+
+// Two `agentpanel start` invocations racing each other both see no live daemon, both start, and the
+// second overwrites the first's runtime file — leaving a live daemon that stop/status/open can never
+// see again. An O_EXCL create is the smallest thing that makes the check-then-start sequence atomic.
+export function acquireStartLock(file = `${runtimeFilePath()}.lock`) {
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      writeFileSync(file, String(process.pid), { flag: 'wx', mode: 0o600 });
+      return () => rmSync(file, { force: true });
+    } catch (err) {
+      if (err?.code !== 'EEXIST') throw err;
+      const holder = Number(readFileSync(file, 'utf8').trim());
+      if (isAlive(holder)) return null;      // someone else is genuinely starting or running
+      rmSync(file, { force: true });         // stale lock from a killed process; take it over
+    }
+  }
+  return null;
+}
 ```
 
 - [ ] **Step 4: Run tests, confirm green, commit**
@@ -2920,6 +2939,7 @@ export function authRoute({ token }) {
 ```js
 // src/daemon/routes/static.js
 import { readFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join, resolve, extname, sep } from 'node:path';
 
 const TYPES = {
@@ -2929,7 +2949,11 @@ const TYPES = {
 };
 
 export function staticRoute({ uiDir }) {
-  const root = resolve(uiDir);
+  // Resolve the root through symlinks once, so containment is compared against real paths on both
+  // sides. On macOS /tmp is itself a symlink, so skipping this would reject legitimate files.
+  const root = (() => {
+    try { return realpathSync(resolve(uiDir)); } catch { return resolve(uiDir); }
+  })();
 
   return {
     method: 'GET',
@@ -2939,8 +2963,16 @@ export function staticRoute({ uiDir }) {
       const inside = requested === root || requested.startsWith(root + sep);
       const isAsset = inside && extname(requested) !== '';
 
-      const file = isAsset ? requested : join(root, 'index.html');
+      const candidate = isAsset ? requested : join(root, 'index.html');
       try {
+        // A lexical check alone is not containment. `requested` can sit inside the UI directory and
+        // still be a symlink whose target is anywhere on disk, which would serve that target's bytes.
+        // Resolve the real path and re-check before reading a single byte.
+        const file = realpathSync(candidate);
+        if (file !== root && !file.startsWith(root + sep)) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          return res.end('{"error":"not_found"}');
+        }
         const body = await readFile(file);
         res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
         res.end(body);
@@ -2975,12 +3007,28 @@ import { startSweeper } from '../core/sweeper.js';
 
 export const VERSION = '0.1.0';
 
+export const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
 export async function startDaemon({
   claudeDir, projectRoot, uiDir,
   host = '127.0.0.1',
+  unsafeBind = false,
   portRange = { start: 8888, end: 8988 },
   now = Date.now,
 }) {
+  // The guard lives here, not only in the CLI. This daemon can run code as the user through Claude,
+  // and its only gate is a token in a 0600 file. Binding it to a routable address exposes that to the
+  // network, so nothing short of an explicit unsafeBind may do it — not a config value, not an env var.
+  if (!LOOPBACK_HOSTS.has(host) && !unsafeBind) {
+    throw new Error(
+      `Refusing to bind ${host}. agentpanel serves a daemon that can execute code as you, gated only by a `
+      + `local token. Loopback only. Pass --unsafe-bind if you genuinely intend to expose it.`,
+    );
+  }
+  if (!LOOPBACK_HOSTS.has(host)) {
+    process.emitWarning(`agentpanel is bound to ${host}, reachable from the network. Anyone who obtains the token can run code as you.`);
+  }
+
   const port = await findAvailablePort({ host, ...portRange });
   const token = generateToken();
   const hub = createHub();
@@ -3273,7 +3321,10 @@ export function RunRow({ run, now }) {
       <span className="desc" title={run.description ?? ''}>{run.description}</span>
       <span className="elapsed">{formatElapsed(elapsed)}</span>
       {run.status === 'stale' && <span className="badge">stale</span>}
-      <span className="sr-only">{`status ${run.status}`}</span>
+      {/* The badge already names a stale run visibly; repeating it here would give the same text twice
+          to assistive tech and make a getByText query ambiguous. Announce only the statuses with no
+          visible label of their own. */}
+      {run.status !== 'stale' && <span className="sr-only">{`status ${run.status}`}</span>}
     </li>
   );
 }
