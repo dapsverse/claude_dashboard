@@ -18,6 +18,11 @@ describe('formatElapsed', () => {
   it('never renders a negative clock', () => {
     expect(formatElapsed(-5)).toBe('0s');
   });
+  it('never renders the literal string "NaN" for a missing or invalid value', () => {
+    expect(formatElapsed(NaN)).toBe('0s');
+    expect(formatElapsed(undefined)).toBe('0s');
+    expect(formatElapsed(null)).toBe('0s');
+  });
 });
 
 describe('LiveRail', () => {
@@ -50,5 +55,22 @@ describe('LiveRail', () => {
     ]} />);
     const rows = screen.getAllByRole('listitem');
     expect(rows[0].textContent).toContain('reviewer');
+  });
+
+  it('gives done and error distinct dot shapes, not just distinct colours', () => {
+    render(<LiveRail now={10_000} runs={[
+      run({ id: 'd', status: 'done', agentType: 'qa', endedAt: 2000, durationMs: 1000 }),
+      run({ id: 'e', status: 'error', agentType: 'programmer2', endedAt: 3000, durationMs: 2000 }),
+    ]} />);
+    const doneDot = screen.getByText('qa').closest('li').querySelector('.dot');
+    const errorDot = screen.getByText('programmer2').closest('li').querySelector('.dot');
+    expect(doneDot.className).toBe('dot done');
+    expect(errorDot.className).toBe('dot error');
+    expect(doneDot.className).not.toBe(errorDot.className);
+  });
+
+  it('gives a failed run a visible text label, not colour alone', () => {
+    render(<LiveRail runs={[run({ status: 'error', endedAt: 4000, durationMs: 3000 })]} now={10_000} />);
+    expect(screen.getByText('error')).toBeTruthy();
   });
 });

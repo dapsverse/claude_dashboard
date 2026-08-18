@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Layout } from './components/Layout.jsx';
 import { LiveRail } from './components/LiveRail.jsx';
@@ -16,20 +16,34 @@ function App() {
   const [catalog, setCatalog] = useState({ agents: [], skills: [] });
   const [reloadKey, setReloadKey] = useState(0);
   const { path } = useRoute();
+  const streamed = useRef(new Set());
 
   useEffect(() => {
-    fetchJson('/api/runs').then((d) => setRuns([...d.active, ...d.recent])).catch((e) => setError(e.message));
-    return connectStream({
+    const stop = connectStream({
       onEvent: (name, payload) => {
         if (name === 'catalog.changed') {
           setReloadKey((k) => k + 1);
           return;
         }
         if (!payload?.id) return;
+        streamed.current.add(payload.id);
         setRuns((prev) => [payload, ...prev.filter((r) => r.id !== payload.id)]);
       },
       onError: () => setError('stream_disconnected'),
     });
+
+    // The stream opens immediately, but the initial snapshot goes through the daemon and a disk
+    // read first. If an event for a run arrives before the snapshot resolves, the snapshot must not
+    // clobber it — only fill in runs the stream has not already reported.
+    fetchJson('/api/runs')
+      .then((d) => setRuns((prev) => {
+        const fromStream = prev.filter((r) => streamed.current.has(r.id));
+        const known = new Set(fromStream.map((r) => r.id));
+        return [...fromStream, ...[...d.active, ...d.recent].filter((r) => !known.has(r.id))];
+      }))
+      .catch((e) => setError(e.message));
+
+    return stop;
   }, []);
 
   useEffect(() => {
