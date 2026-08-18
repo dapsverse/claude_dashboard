@@ -30,6 +30,17 @@ describe('Agents page', () => {
     render(<Agents agents={[]} />);
     expect(screen.getByText(/no agents found/i)).toBeTruthy();
   });
+
+  it('does not render a blank tools row for an empty tools array', () => {
+    render(<Agents agents={[{ kind: 'agent', name: 'no-tools', description: 'd', tools: [], model: null, scope: 'user', source: null }]} />);
+    expect(screen.queryByText('tools')).toBeNull();
+  });
+
+  it('reports a load failure instead of implying the catalog is empty', () => {
+    render(<Agents agents={[]} catalogError="request_failed_500" />);
+    expect(screen.getByText(/could not load/i)).toBeTruthy();
+    expect(screen.queryByText(/no agents found/i)).toBeNull();
+  });
 });
 
 describe('Skills page', () => {
@@ -42,6 +53,23 @@ describe('Skills page', () => {
     render(<Skills skills={[...skills, { kind: 'skill', name: 'zzz-other', description: '', scope: 'user', source: null, version: null }]} initialQuery="brain" />);
     expect(screen.queryByText('zzz-other')).toBeNull();
     expect(screen.getByText('brainstorming')).toBeTruthy();
+  });
+
+  it('names a genuinely empty catalog rather than implying a search happened', () => {
+    render(<Skills skills={[]} />);
+    expect(screen.getByText(/no skills found/i)).toBeTruthy();
+  });
+
+  it('distinguishes no search matches from a genuinely empty catalog', () => {
+    render(<Skills skills={skills} initialQuery="zzz-nonexistent" />);
+    expect(screen.getByText(/no skills match/i)).toBeTruthy();
+    expect(screen.queryByText(/no skills found/i)).toBeNull();
+  });
+
+  it('reports a load failure instead of implying no skills exist', () => {
+    render(<Skills skills={[]} catalogError="request_failed_500" />);
+    expect(screen.getByText(/could not load/i)).toBeTruthy();
+    expect(screen.queryByText(/no skills found/i)).toBeNull();
   });
 });
 

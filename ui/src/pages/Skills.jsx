@@ -1,11 +1,15 @@
 import { useState } from 'react';
 
-export function Skills({ skills, initialQuery = '' }) {
+export function Skills({ skills, initialQuery = '', catalogError }) {
   const [query, setQuery] = useState(initialQuery);
   const term = query.trim().toLowerCase();
   const shown = term
     ? skills.filter((s) => `${s.name} ${s.description}`.toLowerCase().includes(term))
     : skills;
+
+  if (catalogError) {
+    return <p className="empty">Could not load the skill catalog ({catalogError}). Check the daemon is running and reload.</p>;
+  }
 
   return (
     <div>
@@ -14,7 +18,9 @@ export function Skills({ skills, initialQuery = '' }) {
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search skills" />
       </label>
       {shown.length === 0
-        ? <p className="empty">No skills match. Skills live in ~/.claude/skills and in enabled plugins.</p>
+        ? (term
+            ? <p className="empty">No skills match “{query}”.</p>
+            : <p className="empty">No skills found in ~/.claude/skills, this project, or any enabled plugin.</p>)
         : <ul className="cards">
             {shown.map((s) => (
               <li key={`${s.scope}:${s.source ?? ''}:${s.name}`} className="card">

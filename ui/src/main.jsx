@@ -14,7 +14,9 @@ function App() {
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState(null);
   const [catalog, setCatalog] = useState({ agents: [], skills: [] });
+  const [catalogError, setCatalogError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [hooksInstalled, setHooksInstalled] = useState(true);
   const { path } = useRoute();
   const streamed = useRef(new Set());
 
@@ -52,16 +54,24 @@ function App() {
   }, []);
 
   useEffect(() => {
-    fetchJson('/api/catalog').then(setCatalog).catch(() => {});
+    fetchJson('/api/catalog')
+      .then((d) => { setCatalog(d); setCatalogError(null); })
+      .catch((e) => setCatalogError(e.message));
   }, [reloadKey]);
+
+  useEffect(() => {
+    // `/api/health` is public, and the field may be absent against an older daemon. Only an explicit
+    // `false` means "hooks are not installed"; anything else leaves the normal empty state in place.
+    fetchJson('/api/health').then((h) => setHooksInstalled(h?.hooksInstalled !== false)).catch(() => {});
+  }, []);
 
   if (error === 'unauthorized') {
     return <p className="fatal">Session expired — reopen the URL printed by <code>agentpanel open</code>.</p>;
   }
 
-  const page = path === '/agents' ? <Agents agents={catalog.agents} />
-    : path === '/skills' ? <Skills skills={catalog.skills} />
-    : path === '/activity' ? <Activity runs={runs.filter((r) => r.status !== 'running')} />
+  const page = path === '/agents' ? <Agents agents={catalog.agents} catalogError={catalogError} />
+    : path === '/skills' ? <Skills skills={catalog.skills} catalogError={catalogError} />
+    : path === '/activity' ? <Activity runs={runs.filter((r) => r.status !== 'running')} hooksInstalled={hooksInstalled} />
     : <p className="empty">Orchestrator chat arrives in Plan 2. Live agent activity is on the right.</p>;
 
   return <Layout rail={<LiveRail runs={runs} now={now} />}>{page}</Layout>;
