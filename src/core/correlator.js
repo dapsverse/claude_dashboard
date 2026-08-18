@@ -5,11 +5,11 @@
 // to test exhaustively, and the one the whole daemon turns on.
 import { preview } from './redact.js';
 
-// The dispatch tool that spawns a subagent. Verified against real hook payloads
-// captured from CLI 2.1.234: the tool is named 'Agent', not 'Task', though the
-// SDK's own type names suggest otherwise. 'Task' is kept for other builds and for
-// setups where toolAliases renames the tool.
-const AGENT_TOOL_NAMES = new Set(['Agent', 'Task']);
+// The subagent-dispatch tool is `Agent` on CLI 2.1.234 and `Task` on other builds; `toolAliases`
+// can also rename it. Recognise the whole set rather than one build's spelling.
+export const AGENT_TOOL_NAMES = new Set(['Agent', 'Task']);
+
+export function isAgentDispatch(toolName) { return AGENT_TOOL_NAMES.has(toolName); }
 
 export function runId(sessionId, toolUseId) { return `${sessionId}:${toolUseId}`; }
 
@@ -42,7 +42,7 @@ export function planActions(event, { now }) {
 
   switch (event.hook_event_name) {
     case 'PreToolUse':
-      if (AGENT_TOOL_NAMES.has(event.tool_name) && event.tool_use_id) {
+      if (isAgentDispatch(event.tool_name) && event.tool_use_id) {
         actions.push({
           type: 'run.open',
           run: {
@@ -58,7 +58,7 @@ export function planActions(event, { now }) {
       break;
 
     case 'PostToolUse':
-      if (AGENT_TOOL_NAMES.has(event.tool_name) && event.tool_use_id) {
+      if (isAgentDispatch(event.tool_name) && event.tool_use_id) {
         actions.push({
           type: 'run.close',
           close: {

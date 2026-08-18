@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { planActions, runId, isErrorResponse, extractText } from '../../src/core/correlator.js';
+import { planActions, runId, isErrorResponse, extractText, isAgentDispatch } from '../../src/core/correlator.js';
 
 const NOW = 1_700_000_000_000;
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../fixtures/hooks/${name}.json`, import.meta.url)));
@@ -94,6 +94,18 @@ test('an event without a session_id yields no actions', () => {
 test('real captured fixtures produce the expected action types', () => {
   assert.ok(planActions(fixture('pre-tool-use-task'), { now: NOW }).some((a) => a.type === 'run.open'));
   assert.ok(planActions(fixture('post-tool-use-task'), { now: NOW }).some((a) => a.type === 'run.close'));
+});
+
+test('the dispatch tool is recognised under both of its names', () => {
+  assert.equal(isAgentDispatch('Agent'), true);
+  assert.equal(isAgentDispatch('Task'), true);
+  assert.equal(isAgentDispatch('Bash'), false);
+  assert.equal(isAgentDispatch(undefined), false);
+});
+
+test('a Task-named dispatch still opens a run', () => {
+  const actions = planActions({ ...pre, tool_name: 'Task' }, { now: NOW });
+  assert.equal(actions.some((a) => a.type === 'run.open'), true);
 });
 
 test('the fixture pair correlates to one id', () => {
