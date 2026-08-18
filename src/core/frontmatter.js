@@ -17,7 +17,10 @@ function unquote(v) {
 }
 
 export function parseFrontmatter(text) {
-  const src = String(text ?? '');
+  // Normalise line endings first. A file authored on Windows arrives with `\r\n`, and every line would
+  // then end in a `\r` that the key regex cannot match — the parser would return an empty object and
+  // silently lose the whole header rather than failing loudly.
+  const src = String(text ?? '').replace(/\r\n/g, '\n');
   if (!src.startsWith('---')) return { data: {}, body: src };
 
   const end = src.indexOf('\n---', 3);

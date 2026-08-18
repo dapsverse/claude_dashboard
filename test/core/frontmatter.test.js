@@ -57,3 +57,10 @@ test('ignores comment lines and blank lines', () => {
   const { data } = parseFrontmatter('---\n# a comment\n\nname: x\n---\n');
   assert.deepEqual(data, { name: 'x' });
 });
+
+test('parses a header written with Windows line endings', () => {
+  const { data, body } = parseFrontmatter('---\r\nname: reviewer\r\ntools: [Read, Grep]\r\n---\r\nbody here');
+  assert.equal(data.name, 'reviewer');
+  assert.deepEqual(data.tools, ['Read', 'Grep']);
+  assert.equal(body.trim(), 'body here');
+});
