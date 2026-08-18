@@ -1,0 +1,15 @@
+{
+  "name": "agentpanel",
+  "version": "0.1.0",
+  "description": "Local dashboard for Claude Code: live subagent activity, agent and skill catalog",
+  "type": "module",
+  "bin": { "agentpanel": "bin/agentpanel.js" },
+  "engines": { "node": ">=22.5.0" },
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'"
+  },
+  "files": ["bin", "src", "hooks", "dist"],
+  "dependencies": {},
+  "devDependencies": {}
+}
