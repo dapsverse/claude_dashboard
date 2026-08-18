@@ -7,12 +7,13 @@ export function Skills({ skills, initialQuery = '', catalogError }) {
     ? skills.filter((s) => `${s.name} ${s.description}`.toLowerCase().includes(term))
     : skills;
 
-  if (catalogError) {
+  if (catalogError && skills.length === 0) {
     return <p className="empty">Could not load the skill catalog ({catalogError}). Check the daemon is running and reload.</p>;
   }
 
   return (
     <div>
+      {catalogError && <p className="notice">Could not refresh the skill catalog ({catalogError}). Showing the last known list.</p>}
       <label className="search">
         <span className="sr-only">Search skills</span>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search skills" />

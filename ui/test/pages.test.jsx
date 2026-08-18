@@ -41,6 +41,13 @@ describe('Agents page', () => {
     expect(screen.getByText(/could not load/i)).toBeTruthy();
     expect(screen.queryByText(/no agents found/i)).toBeNull();
   });
+
+  it('keeps showing a previously loaded list when a later refresh fails', () => {
+    render(<Agents agents={agents} catalogError="request_failed_500" />);
+    expect(screen.getByText('reviewer')).toBeTruthy();
+    expect(screen.queryByText(/could not load/i)).toBeNull();
+    expect(screen.getByText(/could not refresh/i)).toBeTruthy();
+  });
 });
 
 describe('Skills page', () => {
@@ -71,6 +78,13 @@ describe('Skills page', () => {
     expect(screen.getByText(/could not load/i)).toBeTruthy();
     expect(screen.queryByText(/no skills found/i)).toBeNull();
   });
+
+  it('keeps showing a previously loaded list when a later refresh fails', () => {
+    render(<Skills skills={skills} catalogError="request_failed_500" />);
+    expect(screen.getByText('brainstorming')).toBeTruthy();
+    expect(screen.queryByText(/could not load/i)).toBeNull();
+    expect(screen.getByText(/could not refresh/i)).toBeTruthy();
+  });
 });
 
 describe('Activity page', () => {
@@ -83,5 +97,14 @@ describe('Activity page', () => {
   it('tells the user when hooks are not installed rather than showing an empty list', () => {
     render(<Activity runs={[]} hooksInstalled={false} />);
     expect(screen.getByText(/agentpanel init/)).toBeTruthy();
+  });
+
+  it('recovers once the health check reports hooks are installed after mount', () => {
+    const { rerender } = render(<Activity runs={[]} hooksInstalled={false} />);
+    expect(screen.getByText(/agentpanel init/)).toBeTruthy();
+
+    rerender(<Activity runs={[]} hooksInstalled={true} />);
+    expect(screen.queryByText(/agentpanel init/)).toBeNull();
+    expect(screen.getByText(/no agent runs recorded yet/i)).toBeTruthy();
   });
 });

@@ -62,8 +62,10 @@ function App() {
   useEffect(() => {
     // `/api/health` is public, and the field may be absent against an older daemon. Only an explicit
     // `false` means "hooks are not installed"; anything else leaves the normal empty state in place.
+    // Re-checked on the same signal as the catalog (mount, plus every `catalog.changed` broadcast) so
+    // a mid-session `npx agentpanel init` clears the degraded message without a full page reload.
     fetchJson('/api/health').then((h) => setHooksInstalled(h?.hooksInstalled !== false)).catch(() => {});
-  }, []);
+  }, [reloadKey]);
 
   if (error === 'unauthorized') {
     return <p className="fatal">Session expired — reopen the URL printed by <code>agentpanel open</code>.</p>;

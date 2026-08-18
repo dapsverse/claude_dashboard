@@ -186,6 +186,15 @@ main {
 
 .empty { color: var(--muted); }
 
+.notice {
+  margin: 0 0 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--stale);
+  border-radius: 4px;
+  color: var(--stale);
+  font-size: 12px;
+}
+
 .cards {
   list-style: none;
   margin: 0;
