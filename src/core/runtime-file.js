@@ -48,7 +48,11 @@ export function acquireStartLock(file = `${runtimeFilePath()}.lock`) {
       return () => rmSync(file, { force: true });
     } catch (err) {
       if (err?.code !== 'EEXIST') throw err;
-      const holder = Number(readFileSync(file, 'utf8').trim());
+      // The holder may release the lock between our failed create and this read. That is the lock
+      // working, not failing — loop round and take it rather than surfacing a raw ENOENT.
+      let holder;
+      try { holder = Number(readFileSync(file, 'utf8').trim()); }
+      catch (readErr) { if (readErr?.code === 'ENOENT') continue; throw readErr; }
       if (isAlive(holder)) return null;      // someone else is genuinely starting or running
       rmSync(file, { force: true });         // stale lock from a killed process; take it over
     }

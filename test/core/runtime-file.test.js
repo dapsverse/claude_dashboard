@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, statSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { writeRuntime, readRuntime, readLiveRuntime, clearRuntime, isAlive } from '../../src/core/runtime-file.js';
+import { writeRuntime, readRuntime, readLiveRuntime, clearRuntime, isAlive, acquireStartLock } from '../../src/core/runtime-file.js';
 
 const file = () => join(mkdtempSync(join(tmpdir(), 'ap-')), 'nested', 'daemon.json');
 
@@ -57,4 +57,29 @@ test('clearRuntime is idempotent', () => {
   writeRuntime({ pid: process.pid, port: 1, token: 't', startedAt: 1, version: '0.1.0' }, f);
   clearRuntime(f); clearRuntime(f);
   assert.equal(readRuntime(f), null);
+});
+
+test('acquireStartLock is not wedged by an empty lock file', () => {
+  const f = `${file()}.lock`;
+  mkdirSync(dirname(f), { recursive: true });
+  writeFileSync(f, '');
+  const release = acquireStartLock(f);
+  assert.ok(release, 'an empty, unowned lock file must be taken over rather than blocking forever');
+  release();
+});
+
+test('acquireStartLock is not wedged by an unparseable lock file', () => {
+  const f = `${file()}.lock`;
+  mkdirSync(dirname(f), { recursive: true });
+  writeFileSync(f, 'not-a-pid');
+  const release = acquireStartLock(f);
+  assert.ok(release, 'garbage lock content must not be mistaken for a live holder');
+  release();
+});
+
+test('acquireStartLock refuses when the recorded pid is genuinely alive', () => {
+  const f = `${file()}.lock`;
+  mkdirSync(dirname(f), { recursive: true });
+  writeFileSync(f, String(process.pid));
+  assert.equal(acquireStartLock(f), null);
 });

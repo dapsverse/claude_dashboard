@@ -136,3 +136,16 @@ test('a second start against the same claudeDir is refused rather than orphaning
   const b = await startDaemon({ ...e, portRange: { start: 19101, end: 19110 } });
   await b.stop();
 });
+
+test('a live-held lock reports an actionable error naming the lock file', async () => {
+  const e = env();
+  const a = await startDaemon({ ...e, portRange: { start: 19141, end: 19150 } });
+  await assert.rejects(
+    () => startDaemon({ ...e, portRange: { start: 19151, end: 19160 } }),
+    (err) => {
+      assert.match(err.message, /daemon\.json\.lock/);
+      return true;
+    },
+  );
+  await a.stop();
+});

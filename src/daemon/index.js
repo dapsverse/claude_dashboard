@@ -45,9 +45,15 @@ export async function startDaemon({
   // Two `agentpanel start` invocations racing each other both see no live daemon, both start, and
   // the second overwrites the first's runtime file — leaving a live daemon that stop/status/open can
   // never see again. The lock makes the check-then-start sequence atomic across processes.
-  const releaseLock = acquireStartLock(`${runtimeFile}.lock`);
+  const lockPath = `${runtimeFile}.lock`;
+  const releaseLock = acquireStartLock(lockPath);
   if (!releaseLock) {
-    throw new Error('Another agentpanel start is already in progress or a daemon is already running.');
+    // A live holder blocks `start` with no way out otherwise — name the file and the recovery so a
+    // hard-killed daemon whose pid was later reused by an unrelated process does not strand the user.
+    throw new Error(
+      `Another agentpanel start is already in progress, or a daemon is already running.\n`
+      + `If you are sure neither is true, remove the lock file: ${lockPath}`,
+    );
   }
 
   try {
