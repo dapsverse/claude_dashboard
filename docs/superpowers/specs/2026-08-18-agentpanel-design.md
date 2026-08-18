@@ -114,8 +114,8 @@ Hooks installed by `init`:
 | Event | Matcher | Purpose |
 |---|---|---|
 | `SessionStart` | — | bootstrap daemon, register session |
-| `SubagentStart` | — | open an `AgentRun` keyed by `agent_id` |
-| `PreToolUse` | `Task` | attach `tool_use_id` + dispatch prompt to the run |
+| `PreToolUse` | `Task` | open an `AgentRun` keyed by `(session_id, tool_use_id)` |
+| `SubagentStart` | — | record subagent lifecycle; enrichment only |
 | `PostToolUse` | `Task` | close the `AgentRun` |
 | `SubagentStop` | — | backstop close |
 | `SessionEnd` | — | mark session ended, sweep its open runs |
@@ -143,11 +143,19 @@ tool_use_id)` is the primary key for a run, and no heuristic matching is needed.
 `PreToolUse[Task]` payload enriches the run with the dispatch `description` and `prompt` from `tool_input`,
 and `PostToolUse[Task]` supplies `tool_response` and `duration_ms` for the result preview.
 
-Both signal pairs are recorded because they answer different questions: `SubagentStart`/`SubagentStop` fire
-for the subagent itself, while `PreToolUse`/`PostToolUse[Task]` fire for the parent's dispatch. A run is
-opened by whichever arrives first and closed by whichever closing signal arrives first; late duplicates are
-idempotent no-ops. A sweeper marks runs `stale` when no close signal arrives within 30 minutes or their
-parent session ends — a visibly stale row is better than a spinner that lies indefinitely.
+The two signal pairs cannot be joined. `SubagentStartHookInput` carries `agent_id` but no `tool_use_id`,
+and the `agent_id` on a `PreToolUse[Task]` payload identifies the *parent* context, not the subagent about to
+start. Rather than invent a correlation that the data does not support, the Task tool events are the single
+primary source of runs: they carry `tool_use_id` for exact pairing, `tool_input.subagent_type`,
+`tool_input.description`, and `tool_input.prompt` on open, and `tool_response` plus `duration_ms` on close.
+
+`SubagentStop` is a secondary, explicitly best-effort signal. It is used to close orphaned runs and to attach
+`last_assistant_message` and `agent_transcript_path`, matched to the oldest open run with the same
+`(session_id, agent_type)`. That match is a heuristic and is labelled as such in the code; when it is
+ambiguous the enrichment is skipped rather than guessed, because a wrong transcript link is worse than none.
+
+A sweeper marks runs `stale` when no close signal arrives within 30 minutes or their parent session ends —
+a visibly stale row is better than a spinner that lies indefinitely.
 
 **Retention.** Events older than 7 days are pruned on startup and daily; the window is configurable.
 
