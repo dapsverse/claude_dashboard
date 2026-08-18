@@ -2,12 +2,21 @@ export const REDACTED = '[redacted]';
 
 const PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  // A capture cut off before its END marker — truncated tool output, a killed subprocess, a log line
+  // clipped mid-stream. Without this, the pattern above does not match at all and the key body below
+  // is persisted verbatim. Runs to end of input deliberately: everything after BEGIN is key material.
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g,
   /sk-ant-[A-Za-z0-9_-]{16,}/g,
   /sk-[A-Za-z0-9]{20,}/g,
   /gh[pousr]_[A-Za-z0-9]{20,}/g,
   /AKIA[0-9A-Z]{16}/g,
   /xox[baprs]-[A-Za-z0-9-]{10,}/g,
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,   // JWT
+  // Long opaque blobs: base64 key bodies, long tokens. `\b` is useless here — a hex run embedded in a
+  // base64 blob has word characters on both sides, so no word boundary exists to anchor on. `/` is
+  // excluded from the class so that ordinary filesystem paths, which are longer than 60 characters far
+  // more often than they are secret, survive into previews.
+  /(?<![A-Za-z0-9+=])[A-Za-z0-9+]{60,}={0,2}(?![A-Za-z0-9+=])/g,
   /\b[0-9a-fA-F]{40,}\b/g,                                            // seeds, long digests
 ];
 
