@@ -2052,8 +2052,10 @@ Writes to the user's `~/.claude/settings.json`. Print the plan, then write — n
   - `OUR_MARKER = 'agentpanel'` and `hookEntries(hooksDir) => object` — the `hooks` fragment to merge.
   - `isOurs(entry) => boolean` — true when a handler's `command` references one of our scripts.
   - `mergeHooks(existing, hooksDir) => { hooks, added, removed }` — pure; strips our old entries, appends fresh
-    ones, leaves every foreign entry untouched.
-  - `runInit({ settingsPath, hooksDir, write, log })` and `runUninstall({ settingsPath, stateDir, write, log })`.
+    ones, leaves every foreign entry untouched. `added` and `removed` both list EVENT names, so one event
+    contributes one line to the init output however many handlers it carries.
+  - `runInit({ settingsPath, hooksDir, assumeYes, log, confirm })` and
+    `runUninstall({ settingsPath, stateDir, log })`.
 - Hook registration produced by `hookEntries`, with the verified semantics: `matcher: 'Agent|Task'` takes
   Claude Code's exact-string-list path (letters and `|` only), so it matches both spellings of the dispatch
   tool and nothing else; `async: true` runs the handler without blocking; `timeout` is in **seconds**.
@@ -2118,6 +2120,8 @@ test('re-running after a path change replaces the stale entry rather than stacki
 
 test('merge reports what it added and removed', () => {
   const result = mergeHooks({}, DIR);
+  // `removed` names the events whose entries were stripped, not the individual handlers —
+  // SessionStart carries two handlers but is one line in the init output.
   assert.equal(result.added.length, 5);
   assert.equal(result.removed.length, 0);
   assert.equal(mergeHooks(result.hooks, DIR).removed.length, 5);
