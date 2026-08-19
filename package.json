@@ -7,6 +7,7 @@
   "type": "module",
   "bin": { "agentpanel": "bin/agentpanel.js" },
   "engines": { "node": ">=22.13.0" },
+  "os": ["darwin", "linux"],
   "files": ["bin", "src", "hooks", "dist", "README.md", "LICENSE"],
   "scripts": {
     "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'",

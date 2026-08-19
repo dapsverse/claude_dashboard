@@ -2,7 +2,7 @@ import { formatElapsed } from '../components/RunRow.jsx';
 
 export function Activity({ runs, hooksInstalled = true }) {
   if (!hooksInstalled) {
-    return <p className="empty">Agent tracking is off because the hooks are not installed. Run <code>npx agentpanel init</code>, then start a new Claude Code session.</p>;
+    return <p className="empty">Agent tracking is off because the hooks are not installed. Run <code>agentpanel init</code>, then start a new Claude Code session.</p>;
   }
   if (runs.length === 0) {
     return <p className="empty">No agent runs recorded yet. They appear here as soon as any session dispatches a subagent.</p>;

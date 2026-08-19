@@ -9,33 +9,46 @@ in a live rail, alongside a catalog of every agent and skill available to you �
 
 ## Install
 
+macOS and Linux. Node 22.13 or newer.
+
 ```
-npx agentpanel init
+npm install -g agentpanel
+agentpanel init
 ```
+
+**Install it globally — not through `npx`.** `init` writes the *absolute paths* of the two hook
+scripts into `~/.claude/settings.json`, and Claude Code runs those paths on every session. Under
+`npx` they point into `~/.npm/_npx/<hash>/node_modules/agentpanel`, a cache directory that
+`npm cache clean` deletes and that a new version re-hashes to a different name. When it goes, the
+hooks stop firing with no error anywhere — the dashboard simply never starts again. `init` warns you
+if it notices it is running from there.
 
 `init` prints exactly what it is about to change — which hook events it will add to
 `~/.claude/settings.json` and nothing else — and writes nothing until you confirm:
 
 ```
-npx agentpanel init --yes
+agentpanel init --yes
 ```
 
-It backs up your existing `settings.json` to `settings.json.agentpanel-backup` before writing.
+Before its first edit it backs up your existing `settings.json` to
+`settings.json.agentpanel-backup`. That backup is written once and never overwritten, so running
+`init` again cannot replace your pre-install file with one that already contains agentpanel's hooks.
 From the next Claude Code session onward (in any directory whose workspace trust prompt you have
 accepted — see below), the daemon starts itself and `agentpanel open` shows the dashboard.
 
 To remove everything `init` added:
 
 ```
-npx agentpanel uninstall
+agentpanel uninstall
 ```
 
-`uninstall` restores `settings.json` to its pre-install state (aside from formatting) and deletes
-the state directory — the daemon's runtime file, its log, and its database. One thing it
-deliberately does not remove: the `settings.json.agentpanel-backup` file `init` wrote before its
-first edit. That backup is your safety net for a tool that rewrites your settings, so uninstall
-only reports its path (if it exists) rather than deleting it — removing it afterward is your
-call.
+`uninstall` stops the running daemon first — it has to, since the file that records the daemon's pid
+lives in the state directory it is about to delete — then restores `settings.json` to its pre-install
+state (aside from formatting) and deletes the state directory: the runtime file, the log, and the
+database. If the daemon will not exit, uninstall says so and prints the pid rather than claiming
+success. One thing it deliberately does not remove: the `settings.json.agentpanel-backup` file. That
+backup is your safety net for a tool that rewrites your settings, so uninstall only reports its path
+(if it exists) rather than deleting it — removing it afterward is your call.
 
 ## Commands
 
@@ -45,13 +58,30 @@ call.
 | `agentpanel start`      | Starts the daemon by hand (normally the `SessionStart` hook does this). |
 | `agentpanel stop`       | Stops the running daemon.                                             |
 | `agentpanel status`     | Reports whether a daemon is running, and on which port.                |
-| `agentpanel open`       | Opens the dashboard in your default browser.                          |
+| `agentpanel open`       | Opens the dashboard in your default browser, and prints its token URL. |
 | `agentpanel uninstall`  | Removes the hooks, the state directory, and the database.             |
 
 ## Security
 
 - The daemon binds `127.0.0.1` only, and every route except `/api/health` requires a bearer token
-  read from a `0600` file. It is never reachable from the network, on purpose.
+  read from a `0600` file. It is never reachable from the network, on purpose. Requests must also
+  carry a loopback `Host` header and, if they carry an `Origin` at all, agentpanel's own — reads
+  included, not only writes.
+
+- **The dashboard cookie is visible to every other server on `127.0.0.1` in the same browser
+  profile.** Cookies are scoped by host, not by port: once you open the dashboard, the browser
+  attaches `agentpanel_token` to requests it makes to *any* `127.0.0.1` port — a project dev server,
+  something an `npm postinstall` started. That server sees the token in the request it receives.
+  agentpanel rejects requests carrying a foreign `Origin`, which stops a page on another local port
+  from calling the daemon through your browser, but it cannot stop the header being sent in the first
+  place while `EventSource` has no way to send a bearer token. If that matters to you: use a separate
+  browser profile for the dashboard, or run `agentpanel stop` when you are not looking at it.
+
+- The token is never put on a command line. The hook script hands it to `curl` through a config file
+  on a pipe rather than `-H`, because `/proc/<pid>/cmdline` is world-readable on Linux and the hook
+  fires on every session start, agent dispatch, subagent stop and session end. The state directory is
+  `0700` and the daemon's log `0600`; `agentpanel start` prints the token-bearing URL only when
+  stdout is a terminal, never into the log it writes when the `SessionStart` hook starts it detached.
 
 - **Hooks run shell commands with your full user permissions.** This is Claude Code's own warning,
   not ours, and it is worth repeating in full:
@@ -99,7 +129,14 @@ npm run build:ui   # bundles the dashboard into dist/ui
 (`hooks/agentpanel-hook.sh`) against a real daemon over HTTP — the only test that proves the shell
 script, the HTTP route, the correlator, and the store all agree with each other.
 
-Publishing is done from CI with `npm publish --provenance --access public`, never from a laptop.
+Publishing is done from CI, never from a laptop: `.github/workflows/release.yml` runs both suites
+and the UI build, then `npm publish --provenance --access public` on a published GitHub release,
+authenticated by the `NPM_TOKEN` repository secret. Provenance ties the published tarball to that
+workflow run and commit, which a laptop publish cannot do.
+
+`vite dev` proxies `/api` and `/auth` to a daemon on port 8888 (set `AGENTPANEL_DEV_PORT` if
+`agentpanel status` reports another one). Authenticate the dev session once by opening
+`http://localhost:5173/auth?token=<the token from agentpanel open>`.
 
 ## License
 
