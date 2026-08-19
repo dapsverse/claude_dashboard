@@ -6,13 +6,13 @@
 
 **Architecture:** A single Node process binds 127.0.0.1 (port 8888, scanning to 8988), writes its port and auth token to `~/.claude/agentpanel/daemon.json`, and serves a prebuilt React SPA plus an SSE stream. Claude Code hooks POST their stdin payloads to `/api/hooks`; a correlator turns `PreToolUse[Task]` / `PostToolUse[Task]` pairs into `AgentRun` rows in SQLite and pushes them to the UI. This plan contains no orchestrator chat and no SDK dependency — that is Plan 2.
 
-**Tech Stack:** Node >= 22.5 (`node:http`, `node:sqlite`, `node:test`), zero runtime dependencies; React + Vite for the UI, built and shipped prebuilt; bash for hook scripts.
+**Tech Stack:** Node >= 22.13 (`node:http`, `node:sqlite`, `node:test`), zero runtime dependencies; React + Vite for the UI, built and shipped prebuilt; bash for hook scripts.
 
 **Spec:** `docs/superpowers/specs/2026-08-18-agentpanel-design.md`
 
 ## Global Constraints
 
-- Node floor `>=22.5.0` (first version with `node:sqlite`). Declared in `package.json` `engines`.
+- Node floor `>=22.13.0` (first 22.x release where `node:sqlite` is available without the --experimental-sqlite flag; 22.5 introduced it behind that flag). Declared in `package.json` `engines`.
 - Daemon process is spawned with `--disable-warning=ExperimentalWarning` (verified to suppress the `node:sqlite` experimental notice on Node 24.6.0).
 - **Zero runtime dependencies.** React, Vite, and Playwright are `devDependencies` only. Any proposal to add a runtime dependency is a spec change.
 - All UI copy, code, comments, and docs in English. The repository is public.
@@ -161,7 +161,7 @@ git commit -m "test: capture real hook payload fixtures"
   "description": "Local dashboard for Claude Code: live subagent activity, agent and skill catalog",
   "type": "module",
   "bin": { "agentpanel": "bin/agentpanel.js" },
-  "engines": { "node": ">=22.5.0" },
+  "engines": { "node": ">=22.13.0" },
   "license": "MIT",
   "scripts": {
     "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'"
@@ -3824,7 +3824,7 @@ disagree — debug there before touching anything else.
   "license": "MIT",
   "type": "module",
   "bin": { "agentpanel": "bin/agentpanel.js" },
-  "engines": { "node": ">=22.5.0" },
+  "engines": { "node": ">=22.13.0" },
   "files": ["bin", "src", "hooks", "dist", "README.md", "LICENSE"],
   "scripts": {
     "test": "node --test --disable-warning=ExperimentalWarning test/**/*.test.js",
@@ -3870,7 +3870,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ['22.5', '24']
+        node: ['22.13', '24']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -3902,7 +3902,7 @@ git commit -m "chore: add end-to-end smoke test, packaging, docs, and CI"
   within a second, with a ticking timer, and mark itself done when the subagent finishes.
 - `npx agentpanel uninstall` leaves `settings.json` byte-identical to its pre-install state apart from
   formatting, and removes the state directory.
-- `npm test` and `npm run test:ui` pass on Node 22.5 and 24, on macOS and Ubuntu.
+- `npm test` and `npm run test:ui` pass on Node 22.13 and 24, on macOS and Ubuntu.
 
 ## Not in Plan 1
 
