@@ -7,6 +7,7 @@ import { Skills } from './pages/Skills.jsx';
 import { Activity } from './pages/Activity.jsx';
 import { useRoute } from './router.jsx';
 import { connectStream, fetchJson } from './api.js';
+import { upsertRun, mergeSnapshot } from './components/runList.js';
 import './styles.css';
 
 function App() {
@@ -29,20 +30,16 @@ function App() {
         }
         if (!payload?.id) return;
         streamed.current.add(payload.id);
-        setRuns((prev) => [payload, ...prev.filter((r) => r.id !== payload.id)]);
+        setRuns((prev) => upsertRun(prev, payload));
       },
       onError: () => setError('stream_disconnected'),
     });
 
     // The stream opens immediately, but the initial snapshot goes through the daemon and a disk
     // read first. If an event for a run arrives before the snapshot resolves, the snapshot must not
-    // clobber it — only fill in runs the stream has not already reported.
+    // clobber it — mergeSnapshot only fills in what the stream has not already reported.
     fetchJson('/api/runs')
-      .then((d) => setRuns((prev) => {
-        const fromStream = prev.filter((r) => streamed.current.has(r.id));
-        const known = new Set(fromStream.map((r) => r.id));
-        return [...fromStream, ...[...d.active, ...d.recent].filter((r) => !known.has(r.id))];
-      }))
+      .then((d) => setRuns((prev) => mergeSnapshot(prev, streamed.current, [...d.active, ...d.recent])))
       .catch((e) => setError(e.message));
 
     return stop;

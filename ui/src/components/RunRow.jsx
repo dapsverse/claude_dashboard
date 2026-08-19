@@ -23,7 +23,7 @@ export function RunRow({ run, now }) {
       <span className={DOT[run.status] ?? 'dot'} aria-hidden="true" />
       <span className="agent" title={run.agentType ?? 'unknown'}>{run.agentType ?? 'unknown'}</span>
       <span className="desc" title={run.description ?? ''}>{run.description}</span>
-      <span className="elapsed">{formatElapsed(elapsed)}</span>
+      <span className="elapsed" aria-hidden="true">{formatElapsed(elapsed)}</span>
       {BADGE_STATUSES.has(run.status)
         ? <span className={`badge ${run.status}`}>{run.status}</span>
         : <span className="sr-only">{`status ${run.status}`}</span>}
