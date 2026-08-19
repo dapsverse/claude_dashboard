@@ -1,10 +1,11 @@
 // test/cli/init.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mergeHooks, hookEntries, isOurs, hooksInstalled } from '../../src/cli/hook-config.js';
+import { runInit, isDisposableInstall } from '../../src/cli/init.js';
 
 const DIR = '/opt/agentpanel/hooks';
 const foreign = {
@@ -115,4 +116,45 @@ test('hooksInstalled is false again after uninstall removes our hooks', () => {
   const removed = mergeHooks(installed, DIR, { remove: true }).hooks;
   writeFileSync(settingsPath, JSON.stringify({ hooks: removed }));
   assert.equal(hooksInstalled(settingsPath), false);
+});
+
+test('re-running init keeps the original pre-install backup', () => {
+  // The README calls this backup the user's safety net. Overwriting it on the second `init` replaces
+  // the user's own settings.json with one that already contains agentpanel's hooks — the exact state
+  // the backup exists to undo.
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-init-')), 'settings.json');
+  writeFileSync(settingsPath, JSON.stringify({ someUserKey: true, hooks: foreign }, null, 2));
+
+  runInit({ settingsPath, hooksDir: DIR, assumeYes: true, log: () => {} });
+  runInit({ settingsPath, hooksDir: DIR, assumeYes: true, log: () => {} });
+
+  const backup = JSON.parse(readFileSync(`${settingsPath}.agentpanel-backup`, 'utf8'));
+  assert.equal(backup.someUserKey, true);
+  assert.equal(hooksInstalled(`${settingsPath}.agentpanel-backup`), false,
+    'the backup must be the pre-install file, not a copy of our own installation');
+});
+
+test('isDisposableInstall recognises an npx cache path and nothing else', () => {
+  assert.equal(isDisposableInstall('/Users/x/.npm/_npx/8f2a/node_modules/agentpanel/hooks'), true);
+  assert.equal(isDisposableInstall('/usr/local/lib/node_modules/agentpanel/hooks'), false);
+  assert.equal(isDisposableInstall(undefined), false);
+});
+
+test('init warns when the hooks it is about to install live in an npx cache', () => {
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-init-')), 'settings.json');
+  const lines = [];
+  runInit({
+    settingsPath, hooksDir: '/Users/x/.npm/_npx/8f2a/node_modules/agentpanel/hooks',
+    assumeYes: true, log: (l) => lines.push(l),
+  });
+  const out = lines.join('\n');
+  assert.match(out, /npx cache/);
+  assert.match(out, /npm install -g agentpanel/);
+});
+
+test('init says nothing about npx for a normal install path', () => {
+  const settingsPath = join(mkdtempSync(join(tmpdir(), 'ap-init-')), 'settings.json');
+  const lines = [];
+  runInit({ settingsPath, hooksDir: DIR, assumeYes: true, log: (l) => lines.push(l) });
+  assert.ok(!lines.some((l) => /npx/.test(l)));
 });
