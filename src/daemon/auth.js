@@ -46,9 +46,15 @@ export function bearer(headers) {
   return match ? match[1] : null;
 }
 
-export function authorize(req, { token, port, stateChanging = false }) {
+// The Origin check applies to reads as much as writes. Cookies are scoped by host, not by port, so
+// `agentpanel_token` set on 127.0.0.1 is attached to requests the browser makes to *any* other server
+// on 127.0.0.1 — a project dev server, whatever a postinstall script started. Such a server can read
+// the cookie value from its own request and then call this daemon with it. Rejecting a foreign Origin
+// on /api/runs, /api/catalog and /api/stream is what stops a page on another localhost port from
+// reading the user's prompts and tool output through the browser's ambient cookie.
+export function authorize(req, { token, port }) {
   if (!checkHost(req.headers, port)) return { ok: false, status: 403, reason: 'bad_host' };
-  if (stateChanging && !checkOrigin(req.headers, port)) return { ok: false, status: 403, reason: 'bad_origin' };
+  if (!checkOrigin(req.headers, port)) return { ok: false, status: 403, reason: 'bad_origin' };
   const presented = bearer(req.headers) ?? readCookie(req.headers, COOKIE_NAME);
   if (!presented || !safeEqual(presented, token)) return { ok: false, status: 401, reason: 'bad_token' };
   return { ok: true };

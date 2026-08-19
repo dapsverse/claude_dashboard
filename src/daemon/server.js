@@ -18,7 +18,7 @@ export function createServer({ token, port, hub, routes }) {
     if (!route) return sendJson(res, 404, { error: 'not_found' });
 
     if (!route.public) {
-      const verdict = authorize(req, { token, port: boundPort, stateChanging: !!route.stateChanging });
+      const verdict = authorize(req, { token, port: boundPort });
       if (!verdict.ok) return sendJson(res, verdict.status, { error: verdict.reason });
     } else if (!checkHost(req.headers, boundPort)) {
       return sendJson(res, 403, { error: 'bad_host' });

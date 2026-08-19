@@ -72,3 +72,20 @@ test('host check runs before token check so a bad host never leaks timing on the
 test('readCookie ignores prefix collisions', () => {
   assert.equal(readCookie({ cookie: `not_${COOKIE_NAME}=x; ${COOKIE_NAME}=y` }, COOKIE_NAME), 'y');
 });
+
+test('rejects a foreign Origin on a read request too — cookies are not port-scoped', () => {
+  // A dev server on another 127.0.0.1 port receives `agentpanel_token` from the browser and can
+  // replay it. GET /api/runs, /api/catalog and /api/stream have to be gated exactly like a write.
+  const r = req({ host: '127.0.0.1:8888', origin: 'http://127.0.0.1:3000', cookie: `${COOKIE_NAME}=${TOKEN}` });
+  assert.deepEqual(authorize(r, ok), { ok: false, status: 403, reason: 'bad_origin' });
+});
+
+test('allows an absent Origin on a read request — the hook scripts and curl send none', () => {
+  const r = req({ host: '127.0.0.1:8888', authorization: `Bearer ${TOKEN}` });
+  assert.deepEqual(authorize(r, ok), { ok: true });
+});
+
+test('the Origin check runs before the token check on a read request', () => {
+  const r = req({ host: '127.0.0.1:8888', origin: 'https://evil.example.com' });
+  assert.equal(authorize(r, ok).reason, 'bad_origin');
+});

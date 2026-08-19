@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, statSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { writeRuntime, readRuntime, readLiveRuntime, clearRuntime, isAlive, acquireStartLock } from '../../src/core/runtime-file.js';
+import { writeRuntime, readRuntime, readLiveRuntime, clearRuntime, isAlive, acquireStartLock, restrictStatePaths } from '../../src/core/runtime-file.js';
 
 const file = () => join(mkdtempSync(join(tmpdir(), 'ap-')), 'nested', 'daemon.json');
 
@@ -82,4 +82,22 @@ test('acquireStartLock refuses when the recorded pid is genuinely alive', () => 
   mkdirSync(dirname(f), { recursive: true });
   writeFileSync(f, String(process.pid));
   assert.equal(acquireStartLock(f), null);
+});
+
+test('restrictStatePaths tightens a state directory and log the bootstrap left world-readable', () => {
+  // `mkdir -p` in the SessionStart script creates the directory under the umask, and mkdirSync's
+  // mode is ignored for a directory that already exists — so nothing else re-asserts these modes.
+  const dir = mkdtempSync(join(tmpdir(), 'ap-state-'));
+  const log = join(dir, 'daemon.log');
+  chmodSync(dir, 0o755);
+  writeFileSync(log, 'Open: http://127.0.0.1:8888/auth?token=deadbeef\n', { mode: 0o644 });
+
+  restrictStatePaths(dir);
+
+  assert.equal(statSync(dir).mode & 0o777, 0o700);
+  assert.equal(statSync(log).mode & 0o777, 0o600);
+});
+
+test('restrictStatePaths is a no-op when the directory and log do not exist yet', () => {
+  assert.doesNotThrow(() => restrictStatePaths(join(tmpdir(), 'ap-state-absent-', String(Date.now()))));
 });

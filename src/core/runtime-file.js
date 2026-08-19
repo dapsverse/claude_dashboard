@@ -1,6 +1,16 @@
-import { writeFileSync, readFileSync, renameSync, mkdirSync, rmSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { runtimeFilePath } from './paths.js';
+import { writeFileSync, readFileSync, renameSync, mkdirSync, rmSync, chmodSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { runtimeFilePath, stateDir as defaultStateDir } from './paths.js';
+
+// The SessionStart bootstrap script creates the state directory and the log before Node starts, so
+// the daemon inherits whatever modes that shell left behind — and `mkdirSync`'s mode is ignored for
+// a directory that already exists, which makes writeRuntime's 0700 a no-op there. The token lives in
+// daemon.json and everything the daemon prints lands in daemon.log, so re-assert both modes on
+// startup rather than trusting the shell, the same way the database sidecars are handled.
+export function restrictStatePaths(dir = defaultStateDir()) {
+  try { chmodSync(dir, 0o700); } catch { /* not created yet, or not ours to change */ }
+  try { chmodSync(join(dir, 'daemon.log'), 0o600); } catch { /* no detached log on this install */ }
+}
 
 export function writeRuntime(info, file = runtimeFilePath()) {
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });

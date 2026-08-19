@@ -8,7 +8,7 @@ import { staticRoute } from './routes/static.js';
 import { catalogRoute } from './routes/catalog.js';
 import { hooksRoute, runsRoute } from './routes/hooks.js';
 import { findAvailablePort } from '../core/port.js';
-import { writeRuntime, clearRuntime, acquireStartLock } from '../core/runtime-file.js';
+import { writeRuntime, clearRuntime, acquireStartLock, restrictStatePaths } from '../core/runtime-file.js';
 import { openDb } from '../store/db.js';
 import { createRunsRepo } from '../store/runs.js';
 import { createSessionsRepo } from '../store/sessions.js';
@@ -35,14 +35,21 @@ export async function startDaemon({
   if (!LOOPBACK_HOSTS.has(host) && !unsafeBind) {
     throw new Error(
       `Refusing to bind ${host}. agentpanel serves a daemon that can execute code as you, gated only by a `
-      + `local token. Loopback only. Pass --unsafe-bind if you genuinely intend to expose it.`,
+      + `local token. Loopback only. The CLI offers no way to override this; only code calling `
+      + `startDaemon({ unsafeBind: true }) directly can, and it should not.`,
     );
   }
   if (!LOOPBACK_HOSTS.has(host)) {
     process.emitWarning(`agentpanel is bound to ${host}, reachable from the network. Anyone who obtains the token can run code as you.`);
   }
 
-  const runtimeFile = join(claudeDir, 'agentpanel', 'daemon.json');
+  const stateDir = join(claudeDir, 'agentpanel');
+  // Before anything else touches this directory: the bootstrap script may have created it, and an
+  // older version of that script created it under the umask. Everything below writes the token into
+  // it, so tighten it first rather than assuming the shell got it right.
+  restrictStatePaths(stateDir);
+
+  const runtimeFile = join(stateDir, 'daemon.json');
   // Two `agentpanel start` invocations racing each other both see no live daemon, both start, and
   // the second overwrites the first's runtime file — leaving a live daemon that stop/status/open can
   // never see again. The lock makes the check-then-start sequence atomic across processes.
@@ -62,7 +69,7 @@ export async function startDaemon({
     const token = generateToken();
     const hub = createHub();
 
-    const db = openDb(join(claudeDir, 'agentpanel', 'data.db'));
+    const db = openDb(join(stateDir, 'data.db'));
     const runs = createRunsRepo(db);
     const sessions = createSessionsRepo(db);
     const catalog = createCatalog({ claudeDir, projectRoot });

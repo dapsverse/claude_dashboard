@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDaemon } from '../../src/daemon/index.js';
@@ -180,4 +180,47 @@ test('a live-held lock reports an actionable error naming the lock file', async 
     },
   );
   await a.stop();
+});
+
+test('startup tightens a state directory and log the bootstrap script left world-readable', async () => {
+  // The token is in daemon.json and everything the detached daemon prints lands in daemon.log, so a
+  // 0755 directory beside a 0644 log is a token disclosure to every other user on the machine.
+  const e = env();
+  const state = join(e.claudeDir, 'agentpanel');
+  mkdirSync(state, { recursive: true });
+  chmodSync(state, 0o755);
+  const log = join(state, 'daemon.log');
+  writeFileSync(log, 'stale output\n', { mode: 0o644 });
+
+  const d = await startDaemon({ ...e, portRange: { start: 19161, end: 19170 } });
+  assert.equal(statSync(state).mode & 0o777, 0o700);
+  assert.equal(statSync(log).mode & 0o777, 0o600);
+  await d.stop();
+});
+
+test('a read route rejects a foreign Origin — the cookie is not port-scoped', async () => {
+  // Any other server on 127.0.0.1 the user visits receives `agentpanel_token` with its own requests
+  // and can replay it here. The Origin check is what stops that page reading prompts and tool output.
+  const d = await startDaemon({ ...env(), portRange: { start: 19171, end: 19180 } });
+  for (const path of ['/api/runs', '/api/catalog', '/api/stream']) {
+    const res = await fetch(`http://127.0.0.1:${d.port}${path}`, {
+      headers: { cookie: `agentpanel_token=${d.token}`, origin: 'http://127.0.0.1:3000' },
+    });
+    assert.equal(res.status, 403, `${path} must refuse a foreign origin`);
+    assert.equal((await res.json()).error, 'bad_origin');
+  }
+  await d.stop();
+});
+
+test('a read route still accepts our own Origin and an absent one', async () => {
+  const d = await startDaemon({ ...env(), portRange: { start: 19181, end: 19190 } });
+  const own = await fetch(`http://127.0.0.1:${d.port}/api/runs`, {
+    headers: { cookie: `agentpanel_token=${d.token}`, origin: `http://127.0.0.1:${d.port}` },
+  });
+  assert.equal(own.status, 200);
+  const none = await fetch(`http://127.0.0.1:${d.port}/api/runs`, {
+    headers: { authorization: `Bearer ${d.token}` },
+  });
+  assert.equal(none.status, 200);
+  await d.stop();
 });

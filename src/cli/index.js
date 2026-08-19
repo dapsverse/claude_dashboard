@@ -10,7 +10,19 @@ import { runUninstall } from './uninstall.js';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-const OPENERS = { darwin: 'open', win32: 'start', linux: 'xdg-open' };
+// No win32 entry: `start` is a cmd builtin, not an executable, so execFile could never launch it —
+// and both hook scripts are bash. package.json's `os` field declares the supported platforms.
+const OPENERS = { darwin: 'open', linux: 'xdg-open' };
+
+// The token-bearing URL is printed only to a terminal a human is watching. Under the SessionStart
+// bootstrap this process is detached with stdout redirected into daemon.log, and a log file is the
+// last place the token should end up — `agentpanel open` reads it back from the 0600 runtime file.
+export function startupLines({ port, url, isTty }) {
+  return [
+    `agentpanel listening on http://127.0.0.1:${port}`,
+    isTty ? `Open: ${url}` : 'Open the dashboard with: agentpanel open',
+  ];
+}
 
 export async function main(argv = process.argv.slice(2), log = console.log) {
   const [command = 'status', ...rest] = argv;
@@ -41,8 +53,7 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
         log(String(err?.message ?? err));
         return 1;
       }
-      log(`agentpanel listening on http://127.0.0.1:${daemon.port}`);
-      log(`Open: ${daemon.url}`);
+      for (const line of startupLines({ port: daemon.port, url: daemon.url, isTty: process.stdout.isTTY === true })) log(line);
       for (const signal of ['SIGINT', 'SIGTERM']) {
         process.on(signal, () => { daemon.stop().then(() => process.exit(0)); });
       }
@@ -75,7 +86,7 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
     }
 
     case 'uninstall':
-      runUninstall({ settingsPath: userSettingsPath(), stateDir: stateDir(), log });
+      await runUninstall({ settingsPath: userSettingsPath(), stateDir: stateDir(), log });
       return 0;
 
     default:
