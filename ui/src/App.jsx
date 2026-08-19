@@ -34,6 +34,10 @@ export function App() {
         setRuns((prev) => upsertRun(prev, payload));
       },
       onError: () => setConnectionError('stream_disconnected'),
+      // A silent reconnect after a transient drop delivers no event of its own, so onopen is the
+      // only signal that the stream is back — waiting for the next subagent dispatch to clear the
+      // notice would leave it up indefinitely on an idle dashboard.
+      onOpen: () => setConnectionError(null),
     });
 
     // The stream opens immediately, but the initial snapshot goes through the daemon and a disk

@@ -85,9 +85,12 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
       return 0;
     }
 
-    case 'uninstall':
-      await runUninstall({ settingsPath: userSettingsPath(), stateDir: stateDir(), log });
-      return 0;
+    case 'uninstall': {
+      const { stopped } = await runUninstall({ settingsPath: userSettingsPath(), stateDir: stateDir(), log });
+      // A script checking the exit code must be able to tell "removed, and the daemon is gone" from
+      // "removed, but a daemon is still holding the port" — returning 0 either way would hide that.
+      return stopped ? 0 : 1;
+    }
 
     default:
       log('usage: agentpanel <init|start|stop|status|open|uninstall>');

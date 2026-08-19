@@ -5,7 +5,7 @@ Claude Code session on your machine through hooks, and shows subagents as they d
 in a live rail, alongside a catalog of every agent and skill available to you — with the scope
 (user, project, or plugin) each one comes from.
 
-![agentpanel dashboard showing the live agent rail](docs/assets/screenshot.png)
+![agentpanel dashboard showing the live agent rail](https://raw.githubusercontent.com/dapsverse/agentpanel/main/docs/assets/screenshot.png)
 
 ## Install
 
@@ -77,11 +77,21 @@ backup is your safety net for a tool that rewrites your settings, so uninstall o
   place while `EventSource` has no way to send a bearer token. If that matters to you: use a separate
   browser profile for the dashboard, or run `agentpanel stop` when you are not looking at it.
 
-- The token is never put on a command line. The hook script hands it to `curl` through a config file
-  on a pipe rather than `-H`, because `/proc/<pid>/cmdline` is world-readable on Linux and the hook
-  fires on every session start, agent dispatch, subagent stop and session end. The state directory is
-  `0700` and the daemon's log `0600`; `agentpanel start` prints the token-bearing URL only when
-  stdout is a terminal, never into the log it writes when the `SessionStart` hook starts it detached.
+- The hook path never puts the token on a command line: the hook script hands it to `curl` through a
+  config file on a pipe rather than `-H`, because `/proc/<pid>/cmdline` is world-readable on Linux and
+  the hook fires on every session start, agent dispatch, subagent stop and session end. The state
+  directory is `0700` and the daemon's log `0600`; `agentpanel start` prints the token-bearing URL
+  only when stdout is a terminal, never into the log it writes when the `SessionStart` hook starts it
+  detached. **`agentpanel open` does not get the same treatment**: it execs the platform opener
+  (`open` on macOS, `xdg-open` on Linux) with the token-bearing URL as an argument, because neither
+  opener has a way to receive a URL that isn't argv, and each in turn launches the browser with that
+  same URL as one of *its* arguments. On Linux that means the token sits in the browser process's own
+  `/proc/<pid>/cmdline` for as long as that browser process runs — not just for the moment `open`/
+  `xdg-open` executes, and longer than the curl-through-a-hook case above, which only exists for the
+  duration of one hook invocation. There is no reliable cross-platform way to hand a URL to `open` or
+  `xdg-open` without argv, so if this matters to you: close the tab agentpanel opened once you are
+  done with it, or open the printed URL yourself in a private/incognito window you control the
+  lifetime of.
 
 - **Hooks run shell commands with your full user permissions.** This is Claude Code's own warning,
   not ours, and it is worth repeating in full:

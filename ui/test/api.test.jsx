@@ -89,6 +89,14 @@ describe('connectStream', () => {
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 
+  it('calls onOpen when the stream (re)connects, so a stale disconnect notice can be cleared', () => {
+    const onOpen = vi.fn();
+    connectStream({ onEvent: () => {}, onOpen });
+    const source = FakeEventSource.instances[0];
+    source.onopen();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it('returns a cleanup function that closes the underlying EventSource', () => {
     const cleanup = connectStream({ onEvent: () => {} });
     const source = FakeEventSource.instances[0];

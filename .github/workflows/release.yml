@@ -17,6 +17,19 @@ jobs:
         with:
           node-version: '22.13'
           registry-url: 'https://registry.npmjs.org'
+      # A release tag with an unbumped package.json either republishes the previous version under a
+      # new tag or dies on EPUBLISHCONFLICT — and either way that's after both suites have already
+      # run. Catch it before spending any of that time.
+      - name: Verify package.json version matches the release tag
+        run: |
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          EXPECTED="${TAG_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$EXPECTED" != "$PKG_VERSION" ]; then
+            echo "::error::release tag $TAG_NAME expects version $EXPECTED but package.json has $PKG_VERSION"
+            exit 1
+          fi
+          echo "package.json version $PKG_VERSION matches release tag $TAG_NAME"
       - run: npm ci
       # Nothing is published that has not passed both suites and produced a real bundle first.
       - run: npm test
