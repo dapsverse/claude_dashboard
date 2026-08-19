@@ -77,3 +77,13 @@ test('hub drops a client whose write throws', () => {
   hub.broadcast('ping', {});
   assert.equal(hub.size(), 0);
 });
+
+test('a state-changing route that is also public refuses to boot', () => {
+  assert.throws(
+    () => createServer({
+      token: TOKEN, port: 0, hub: createHub(),
+      routes: [{ method: 'POST', path: '/api/chat', stateChanging: true, public: true, handler() {} }],
+    }),
+    /cannot be public/,
+  );
+});

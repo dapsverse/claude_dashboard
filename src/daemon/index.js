@@ -7,11 +7,16 @@ import { authRoute } from './routes/auth.js';
 import { staticRoute } from './routes/static.js';
 import { catalogRoute } from './routes/catalog.js';
 import { hooksRoute, runsRoute } from './routes/hooks.js';
+import { chatRoutes } from './routes/chat.js';
 import { findAvailablePort } from '../core/port.js';
 import { writeRuntime, clearRuntime, acquireStartLock, restrictStatePaths } from '../core/runtime-file.js';
 import { openDb } from '../store/db.js';
 import { createRunsRepo } from '../store/runs.js';
 import { createSessionsRepo } from '../store/sessions.js';
+import { createChatRepo } from '../store/chat.js';
+import { createProjectsRepo } from '../store/projects.js';
+import { createSessionManager } from '../chat/session.js';
+import { createPermissionGate } from '../chat/permissions.js';
 import { createCatalog } from '../catalog/index.js';
 import { startSweeper } from '../core/sweeper.js';
 import { hooksInstalled } from '../cli/hook-config.js';
@@ -72,6 +77,12 @@ export async function startDaemon({
     const db = openDb(join(stateDir, 'data.db'));
     const runs = createRunsRepo(db);
     const sessions = createSessionsRepo(db);
+    const chat = createChatRepo(db);
+    const projects = createProjectsRepo(db);
+    // The gate and the session manager are separate on purpose: the gate is the security boundary
+    // and knows nothing about the SDK, and the manager cannot answer its own permission prompts.
+    const permissions = createPermissionGate({ hub, now });
+    const chatSessions = createSessionManager({ store: chat, hub, now, permissions });
     const catalog = createCatalog({ claudeDir, projectRoot });
     catalog.watch((next) => hub.broadcast('catalog.changed', { scannedAt: next.scannedAt }));
 
@@ -91,6 +102,7 @@ export async function startDaemon({
       catalogRoute({ catalog }),
       runsRoute({ runs }),
       hooksRoute({ runs, sessions, hub, now }),
+      ...chatRoutes({ sessions: chatSessions, permissions, chat, projects, now }),
       staticRoute({ uiDir }),
     ];
 
@@ -106,6 +118,11 @@ export async function startDaemon({
       async stop() {
         try {
           stopSweeper();
+          // Sessions first: each holds a child process and an open permission prompt may be
+          // parked on a promise. Closing the gate afterwards denies anything still waiting, so
+          // nothing is left holding the event loop open after stop() resolves.
+          await chatSessions.close();
+          permissions.close();
           catalog.close();
           hub.closeAll();
           clearRuntime(runtimeFile);

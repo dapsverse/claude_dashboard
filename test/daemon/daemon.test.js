@@ -224,3 +224,36 @@ test('a read route still accepts our own Origin and an absent one', async () => 
   assert.equal(none.status, 200);
   await d.stop();
 });
+
+test('the chat routes are served by the daemon and gated like every other route', async () => {
+  const e = env();
+  const d = await startDaemon({ ...e, portRange: { start: 19191, end: 19200 } });
+  const auth = { authorization: `Bearer ${d.token}`, 'content-type': 'application/json' };
+  const at = (path) => `http://127.0.0.1:${d.port}${path}`;
+
+  assert.deepEqual(await (await fetch(at('/api/projects'), { headers: auth })).json(), { projects: [] });
+
+  const created = await fetch(at('/api/projects'), { method: 'POST', headers: auth, body: JSON.stringify({ path: e.claudeDir }) });
+  assert.equal(created.status, 201);
+  assert.equal((await (await fetch(at('/api/projects'), { headers: auth })).json()).projects.length, 1);
+
+  const history = await fetch(at(`/api/chat/history?projectPath=${encodeURIComponent(e.claudeDir)}`), { headers: auth });
+  assert.deepEqual((await history.json()).messages, []);
+
+  // A path that is not a directory is refused before any session is started — which is also what
+  // keeps this test from spawning a real Claude session.
+  const bad = await fetch(at('/api/chat'), { method: 'POST', headers: auth, body: JSON.stringify({ projectPath: '/nope/nope', text: 'hi' }) });
+  assert.equal(bad.status, 400);
+
+  for (const path of ['/api/chat', '/api/chat/interrupt', '/api/chat/reset', '/api/permissions/abc']) {
+    const anon = await fetch(at(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(anon.status, 401, `${path} must require a token`);
+    const foreign = await fetch(at(path), {
+      method: 'POST',
+      headers: { cookie: `agentpanel_token=${d.token}`, origin: 'http://127.0.0.1:3000', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(foreign.status, 403, `${path} must refuse a foreign origin`);
+  }
+  await d.stop();
+});

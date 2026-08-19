@@ -9,6 +9,15 @@ function sendJson(res, status, body) {
 }
 
 export function createServer({ token, port, hub, routes }) {
+  // A mutating route that is also public would be a browser-reachable, unauthenticated way to
+  // change state — start a Claude session, answer a permission prompt. Refuse to boot rather than
+  // serve one: this is cheap to check here and impossible to notice in review of a later diff.
+  for (const route of routes) {
+    if (route.stateChanging && route.public) {
+      throw new Error(`Refusing to serve ${route.method} ${route.path ?? route.prefix}: a stateChanging route cannot be public.`);
+    }
+  }
+
   const server = createHttpServer((req, res) => {
     const boundPort = server.address()?.port ?? port;
     const url = new URL(req.url, `http://127.0.0.1:${boundPort}`);
