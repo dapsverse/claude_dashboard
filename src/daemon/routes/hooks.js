@@ -47,11 +47,18 @@ export function applyActions(actions, { runs, sessions, hub }) {
       case 'session.touch':
         sessions.touch(action.session);
         break;
-      case 'session.end':
+      case 'session.end': {
         sessions.end(action.sessionId, action.at);
-        runs.endSessionRuns(action.sessionId, action.at);
+        // One run.close per staled run, not just the session event: the dashboard keys everything it
+        // renders by run id and drops a payload without one, so a bare {sessionId} left the rail
+        // showing a phantom agent with a ticking clock until the page was reloaded. The sweeper
+        // cannot repair it either — the run is out of listActive() the moment it is staled.
+        for (const id of runs.endSessionRuns(action.sessionId, action.at)) {
+          hub.broadcast('run.close', runs.get(id));
+        }
         hub.broadcast('session.end', { sessionId: action.sessionId });
         break;
+      }
       case 'run.open':
         runs.open(action.run);
         hub.broadcast('run.open', runs.get(action.run.id));
@@ -74,7 +81,6 @@ export function hooksRoute({ runs, sessions, hub, now = Date.now }) {
   return {
     method: 'POST',
     path: '/api/hooks',
-    stateChanging: true,
     handler: async (req, res) => {
       let raw;
       try { raw = await readBody(req); }

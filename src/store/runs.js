@@ -9,14 +9,22 @@ export function createRunsRepo(db) {
   const insert = db.prepare(`INSERT OR IGNORE INTO runs
     (id, session_id, agent_type, description, prompt, status, started_at)
     VALUES (?, ?, ?, ?, ?, 'running', ?)`);
+  // `stale` is accepted alongside `running`: a run staled by the 30-minute sweeper or by SessionEnd
+  // may still finish for real afterwards, and the genuine PostToolUse must be allowed to overwrite the
+  // guess with the actual status, duration, and result. Long-running agents are the normal case here.
   const closeStmt = db.prepare(`UPDATE runs
     SET status = ?, ended_at = ?, duration_ms = ?, result_preview = ?
-    WHERE id = ? AND status = 'running'`);
+    WHERE id = ? AND status IN ('running', 'stale')`);
   const getStmt = db.prepare('SELECT * FROM runs WHERE id = ?');
   const activeStmt = db.prepare("SELECT * FROM runs WHERE status = 'running' ORDER BY started_at DESC");
   const recentStmt = db.prepare('SELECT * FROM runs ORDER BY started_at DESC LIMIT ?');
-  const staleStmt = db.prepare("UPDATE runs SET status = 'stale', ended_at = ? WHERE status = 'running' AND started_at < ?");
-  const endSessionStmt = db.prepare("UPDATE runs SET status = 'stale', ended_at = ? WHERE status = 'running' AND session_id = ?");
+  // duration_ms is set alongside ended_at: the UI reads durationMs for a finished row, so a staled run
+  // that only had ended_at rendered as `0s` — indistinguishable from a run that never started.
+  const staleStmt = db.prepare(`UPDATE runs SET status = 'stale', ended_at = ?, duration_ms = MAX(0, ? - started_at)
+    WHERE status = 'running' AND started_at < ?`);
+  const endSessionStmt = db.prepare(`UPDATE runs SET status = 'stale', ended_at = ?, duration_ms = MAX(0, ? - started_at)
+    WHERE status = 'running' AND session_id = ?`);
+  const sessionOpenIdsStmt = db.prepare("SELECT id FROM runs WHERE status = 'running' AND session_id = ?");
   const oldestMatchStmt = db.prepare(`SELECT id FROM runs
     WHERE status = 'running' AND session_id = ? AND agent_type = ? ORDER BY started_at ASC LIMIT 1`);
   const enrichStmt = db.prepare('UPDATE runs SET transcript_path = ?, result_preview = COALESCE(?, result_preview) WHERE id = ?');
@@ -32,9 +40,9 @@ export function createRunsRepo(db) {
       // A clock step backwards (NTP correction, VM resume) must not store a negative duration.
       const duration = durationMs ?? Math.max(0, endedAt - row.started_at);
       const result = closeStmt.run(status, endedAt, duration, resultPreview ?? null, id);
-      // Report the state transition, not merely the row's existence: the UPDATE is guarded by
-      // `status = 'running'`, so a replayed close changes nothing and must not make the caller
-      // broadcast a second run.close for a run that already finished.
+      // Report the state transition, not merely the row's existence: the UPDATE ignores an already
+      // finished row, so a replayed close changes nothing and must not make the caller broadcast a
+      // second run.close for a run that already finished.
       return result.changes > 0;
     },
     enrich({ sessionId, agentType }, { transcriptPath, resultPreview }) {
@@ -46,8 +54,15 @@ export function createRunsRepo(db) {
     get(id) { return toRun(getStmt.get(id)); },
     listActive() { return activeStmt.all().map(toRun); },
     listRecent(limit = 100) { return recentStmt.all(limit).map(toRun); },
-    markStaleBefore(cutoffTs, now) { staleStmt.run(now, cutoffTs); },
-    endSessionRuns(sessionId, now) { endSessionStmt.run(now, sessionId); },
+    markStaleBefore(cutoffTs, now) { staleStmt.run(now, now, cutoffTs); },
+    // Returns the ids it staled. The caller has to broadcast one run.close per row: a bare
+    // `{sessionId}` event carries no run id, and the dashboard has no way to match it to the rows it
+    // is rendering — the rail would keep ticking for a run that ended until the page is reloaded.
+    endSessionRuns(sessionId, now) {
+      const ids = sessionOpenIdsStmt.all(sessionId).map((r) => r.id);
+      endSessionStmt.run(now, now, sessionId);
+      return ids;
+    },
     pruneBefore(ts) { pruneStmt.run(ts); },
   };
 }

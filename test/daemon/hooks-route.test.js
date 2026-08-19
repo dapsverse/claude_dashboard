@@ -129,3 +129,46 @@ test('the sweeper stales an abandoned run and broadcasts it', async () => {
   assert.equal(runs.get('s1:tu_1').status, 'stale');
   server.close();
 });
+
+test('SessionEnd broadcasts a run.close carrying the staled run, not only a sessionId', async () => {
+  // The dashboard keys every row by run id and ignores a payload without one, so a bare
+  // {sessionId} left a phantom agent in the rail with a ticking clock until the page reloaded.
+  const { server, post, events } = await boot();
+  await post(pre);
+  events.length = 0;
+  clock += 4000;
+  await post({ hook_event_name: 'SessionEnd', session_id: 's1', cwd: '/proj' });
+
+  const frames = events.join('');
+  assert.match(frames, /event: run\.close/);
+  const payload = JSON.parse(/event: run\.close\ndata: (.*)\n/.exec(frames)[1]);
+  assert.equal(payload.id, 's1:tu_1');
+  assert.equal(payload.status, 'stale');
+  assert.equal(payload.durationMs, 4000, 'a staled run must not render as 0s');
+  assert.match(frames, /event: session\.end/);
+  server.close();
+});
+
+test('a genuine PostToolUse after a stale still records the real result', async () => {
+  // A run longer than the 30-minute stale window is the core case for this product: the sweeper
+  // marks it stale while it is very much alive, and the real completion must overwrite that guess.
+  const { server, runs, post, events } = await boot();
+  await post(pre);
+  clock += 31 * 60 * 1000;
+  const stop = startSweeper({ runs, hub: { broadcast: () => {} }, now, intervalMs: 10 });
+  await new Promise((r) => setTimeout(r, 40));
+  stop();
+  assert.equal(runs.get('s1:tu_1').status, 'stale');
+
+  events.length = 0;
+  clock += 1000;
+  const res = await post({ ...pre, hook_event_name: 'PostToolUse', tool_response: 'all done', duration_ms: 1_861_000 });
+  assert.equal(res.status, 200);
+
+  const row = runs.get('s1:tu_1');
+  assert.equal(row.status, 'done');
+  assert.equal(row.durationMs, 1_861_000);
+  assert.equal(row.resultPreview, 'all done');
+  assert.match(events.join(''), /event: run\.close/, 'the recovery is reported to the dashboard');
+  server.close();
+});

@@ -127,3 +127,47 @@ test('sessions touch upserts and preserves the original startedAt', () => {
   s.end('x', 30);
   assert.equal(s.get('x').status, 'ended');
 });
+
+test('staling records a duration so the row does not render as 0s', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open({ ...baseRun, id: 'swept', startedAt: 1000 });
+  runs.markStaleBefore(5000, 20_000);
+  assert.equal(runs.get('swept').durationMs, 19_000);
+
+  runs.open({ ...baseRun, id: 'ended', sessionId: 's9', startedAt: 2000 });
+  runs.endSessionRuns('s9', 8000);
+  assert.equal(runs.get('ended').durationMs, 6000);
+});
+
+test('endSessionRuns returns the ids it staled so the caller can broadcast each one', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open({ ...baseRun, id: 'a', sessionId: 's1' });
+  runs.open({ ...baseRun, id: 'b', sessionId: 's1' });
+  runs.open({ ...baseRun, id: 'c', sessionId: 's2' });
+  assert.deepEqual(runs.endSessionRuns('s1', 7000).sort(), ['a', 'b']);
+  assert.deepEqual(runs.endSessionRuns('s1', 8000), [], 'nothing left open to report a second time');
+});
+
+test('a genuine completion recovers a staled run rather than being discarded', () => {
+  // A run longer than the 30-minute sweeper window is marked stale while still alive. Its real
+  // PostToolUse must be allowed to overwrite that guess, or the run is recorded as abandoned
+  // forever with no duration and no result.
+  const runs = createRunsRepo(fresh());
+  runs.open({ ...baseRun, id: 'long', startedAt: 0 });
+  runs.markStaleBefore(1000, 1_860_000);
+  assert.equal(runs.get('long').status, 'stale');
+
+  assert.equal(runs.close({ id: 'long', status: 'done', endedAt: 1_861_000, resultPreview: 'shipped' }), true);
+  const row = runs.get('long');
+  assert.equal(row.status, 'done');
+  assert.equal(row.durationMs, 1_861_000);
+  assert.equal(row.resultPreview, 'shipped');
+});
+
+test('a finished run is still immune to a later close', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open({ ...baseRun, id: 'done-once' });
+  runs.close({ id: 'done-once', status: 'done', endedAt: 2000, resultPreview: 'ok' });
+  assert.equal(runs.close({ id: 'done-once', status: 'error', endedAt: 9000, resultPreview: 'no' }), false);
+  assert.equal(runs.get('done-once').resultPreview, 'ok');
+});
