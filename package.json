@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "bin": { "agentpanel": "bin/agentpanel.js" },
-  "engines": { "node": ">=22.5.0" },
+  "engines": { "node": ">=22.13.0" },
   "files": ["bin", "src", "hooks", "dist", "README.md", "LICENSE"],
   "scripts": {
     "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'",
@@ -23,6 +23,5 @@
     "react-dom": "^19.2.8",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"
-  },
-  "repository": { "type": "git", "url": "git+https://github.com/<owner>/agentpanel.git" }
+  }
 }

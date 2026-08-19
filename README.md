@@ -31,8 +31,11 @@ npx agentpanel uninstall
 ```
 
 `uninstall` restores `settings.json` to its pre-install state (aside from formatting) and deletes
-the state directory — the daemon's runtime file, its log, and its database — leaving no trace on
-disk.
+the state directory — the daemon's runtime file, its log, and its database. One thing it
+deliberately does not remove: the `settings.json.agentpanel-backup` file `init` wrote before its
+first edit. That backup is your safety net for a tool that rewrites your settings, so uninstall
+only reports its path (if it exists) rather than deleting it — removing it afterward is your
+call.
 
 ## Commands
 

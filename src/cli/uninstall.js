@@ -11,5 +11,14 @@ export function runUninstall({ settingsPath, stateDir, log = console.log }) {
   }
   rmSync(stateDir, { recursive: true, force: true });
   log(`  - removed ${stateDir} (database, logs, runtime file)`);
+
+  // `init` writes this backup outside stateDir on purpose, as the user's safety net for a tool
+  // that edits their settings.json. Deleting it here silently would remove that safety net at
+  // exactly the moment it might be needed, so uninstall only ever reports it — never deletes it.
+  const backupPath = `${settingsPath}.agentpanel-backup`;
+  if (existsSync(backupPath)) {
+    log(`  - left in place: ${backupPath} (your pre-install settings.json; delete it yourself if you don't need it)`);
+  }
+
   log('agentpanel is fully removed. Stop any running daemon with: agentpanel stop');
 }
