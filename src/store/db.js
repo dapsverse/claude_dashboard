@@ -27,6 +27,26 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS runs_status_idx  ON runs(status, started_at DESC);
 CREATE INDEX IF NOT EXISTS runs_session_idx ON runs(session_id);
+CREATE TABLE IF NOT EXISTS projects (
+  path         TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  added_at     INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  project_path TEXT PRIMARY KEY,
+  session_id   TEXT,
+  created_at   INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_path TEXT NOT NULL,
+  role         TEXT NOT NULL,
+  blocks       TEXT NOT NULL,
+  ts           INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_messages_project_idx ON chat_messages(project_path, ts, id);
 `;
 
 export function openDb(path) {

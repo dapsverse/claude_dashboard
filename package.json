@@ -2,23 +2,50 @@
   "name": "agentpanel",
   "version": "0.1.0",
   "description": "Local dashboard for Claude Code: live subagent activity, agent and skill catalog",
-  "keywords": ["claude", "claude-code", "dashboard", "agents", "observability"],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "dashboard",
+    "agents",
+    "observability"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/dapsverse/agentpanel.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dapsverse/agentpanel.git"
+  },
   "homepage": "https://github.com/dapsverse/agentpanel#readme",
-  "bugs": { "url": "https://github.com/dapsverse/agentpanel/issues" },
+  "bugs": {
+    "url": "https://github.com/dapsverse/agentpanel/issues"
+  },
   "type": "module",
-  "bin": { "agentpanel": "bin/agentpanel.js" },
-  "engines": { "node": ">=22.13.0" },
-  "os": ["darwin", "linux"],
-  "files": ["bin", "src", "hooks", "dist", "README.md", "LICENSE"],
+  "bin": {
+    "agentpanel": "bin/agentpanel.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "files": [
+    "bin",
+    "src",
+    "hooks",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test --disable-warning=ExperimentalWarning 'test/**/*.test.js'",
     "test:ui": "vitest run --root ui",
     "build:ui": "vite build --config ui/vite.config.js",
     "prepack": "npm run build:ui"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.234"
+  },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@vitejs/plugin-react": "^6.0.5",
