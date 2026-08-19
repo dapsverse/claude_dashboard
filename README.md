@@ -114,17 +114,36 @@ backup is your safety net for a tool that rewrites your settings, so uninstall o
   complete: it catches the shapes it knows, nothing more. One consequence worth knowing: a private
   key captured without its closing `-----END ... PRIVATE KEY-----` marker causes everything after
   the `BEGIN` marker to be redacted, because a truncated capture has no reliable end to stop at, and
-  redacting too much is the safe failure here. Nothing agentpanel touches is ever sent off the
-  machine — there is no server, no telemetry, no network call other than the loopback ones between
-  the hook scripts, the daemon, and your browser.
+  redacting too much is the safe failure here. agentpanel has no telemetry and no server of its
+  own: it never sends anything anywhere on its own account, and the observability half — hooks,
+  catalog, live rail — makes no network call at all beyond the loopback ones between the hook
+  scripts, the daemon, and your browser.
+
+- **The orchestrator chat does reach Anthropic, because that is what a Claude session is.** When you
+  send a message from the dashboard the daemon runs a Claude Agent SDK session on your machine, and
+  that session talks to the Anthropic API exactly as `claude` in your terminal does, under the same
+  login. It loads *your* configuration — `settingSources: ['user', 'project', 'local']`, so your
+  CLAUDE.md, agents, skills and plugins are all in play. Tool calls the session cannot decide on its
+  own stop at an approval prompt in the dashboard; an unanswered prompt is denied, never allowed, and
+  the session never runs in `bypassPermissions` mode. Read-only `Read`, `Glob` and `Grep` calls are
+  auto-approved so ordinary questions do not become a wall of prompts. Claude Code's own policy layer
+  sits above this gate and may settle some calls before agentpanel is consulted, in either direction.
+
+## Dependencies
+
+One runtime dependency: [`@anthropic-ai/claude-agent-sdk`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk),
+which is what runs the orchestrator chat's session (it brings `@anthropic-ai/sdk`,
+`@modelcontextprotocol/sdk` and `zod` as peers). Everything else the daemon does — HTTP, SSE,
+SQLite, the hook path, the catalog scanner — is Node's standard library. React and Vite are
+devDependencies; the dashboard ships prebuilt in `dist/ui`.
 
 ## Not in this release
 
-This is Plan 1: hooks, the daemon, the catalog, and the live rail. The orchestrator chat, the SDK
-session behind it, the permission-approval UI, the project switcher, agent creation, skill
-installation, and marketplace browsing are Plan 2, built after this one lands so it can be designed
-against real interfaces instead of predicted ones. If you were expecting to talk to Claude from
-this dashboard, that is coming — it is not missing by accident.
+This is Plan 1 plus the daemon half of Plan 2's orchestrator chat: hooks, the daemon, the catalog,
+the live rail, and the HTTP/SSE surface an SDK session and its approval gate are driven through. The
+chat *interface* — the message view, the approval prompts, the project switcher — is still being
+built, along with agent creation, skill installation, and marketplace browsing. If you were
+expecting to talk to Claude from this dashboard, that is coming — it is not missing by accident.
 
 ## Development
 
@@ -138,6 +157,17 @@ npm run build:ui   # bundles the dashboard into dist/ui
 `npm test` includes `test/e2e/smoke.test.js`, which drives the real hook script
 (`hooks/agentpanel-hook.sh`) against a real daemon over HTTP — the only test that proves the shell
 script, the HTTP route, the correlator, and the store all agree with each other.
+
+The chat suite runs against a fake SDK, so `npm test` never spends a token or touches the network.
+The two tests that drive the real Claude Agent SDK are opt-in:
+
+```
+E2E_LIVE=1 node --test test/chat/live.test.js
+```
+
+Run those from a shell that is not itself inside a Claude Code session — a child session inherits
+the parent's permission behaviour through the environment, and the approval test would then pass
+for the wrong reason.
 
 Publishing is done from CI, never from a laptop: `.github/workflows/release.yml` runs both suites
 and the UI build, then `npm publish --provenance --access public` on a published GitHub release,
