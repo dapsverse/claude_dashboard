@@ -4,6 +4,7 @@
   --running: #4ade80; --done: #64748b; --error: #f87171; --stale: #fbbf24;
   --scope-user: #60a5fa; --scope-project: #c084fc; --scope-plugin: #2dd4bf;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --raise: #1b2029; --overlay: rgba(8, 10, 14, 0.78);
   color-scheme: dark;
 }
 
@@ -311,4 +312,534 @@ table.activity td:first-child {
   .shell { grid-template-columns: 1fr; }
   nav { border-right: none; border-bottom: 1px solid var(--line); }
   .rail { border-left: none; border-top: 1px solid var(--line); }
+}
+
+/* ---------------------------------------------------------------- project switcher (sidebar) */
+
+.projects {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.projects h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0;
+}
+
+.projects select,
+.project-add input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.project-path {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.project-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.project-add label { font-size: 11px; color: var(--muted); }
+
+.project-add-actions { display: flex; gap: 6px; }
+
+/* ---------------------------------------------------------------- buttons */
+
+.btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--raise);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+
+.btn.primary { border-color: var(--running); color: var(--running); }
+.btn.danger { border-color: var(--error); color: var(--error); }
+
+.btn.subtle {
+  background: none;
+  border-color: transparent;
+  color: var(--muted);
+  padding-left: 0;
+}
+
+.btn.subtle:hover:not(:disabled) { color: var(--text); border-color: var(--line); padding-left: 10px; }
+
+/* Disabled is not signalled by opacity alone: the border and the text both drop to the muted
+   token and the cursor changes, so the state survives a low-contrast screen. */
+.btn:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  border-color: var(--line);
+  background: transparent;
+}
+
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+a:focus-visible,
+pre:focus-visible {
+  outline: 2px solid var(--running);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- chat shell */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: calc(100vh - 48px);
+  min-height: 0;
+}
+
+.transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 8px;
+}
+
+/* Anchors the conversation to the bottom of an under-full transcript, the way a chat log reads,
+   without `justify-content: flex-end` — which in a scrollable flex container makes the top of an
+   overflowing list unreachable. */
+.transcript > *:first-child { margin-top: auto; }
+
+.msg { min-width: 0; }
+
+.msg.nested {
+  margin-left: 18px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.msg-role {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.msg.user .msg-role { color: var(--scope-user); }
+
+.msg-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.msg-body { min-width: 0; }
+
+.user-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-left: 2px solid var(--scope-user);
+  padding-left: 10px;
+}
+
+.msg.streaming .md > *:last-child::after {
+  content: '▌';
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+/* ---------------------------------------------------------------- markdown */
+
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+
+.md p, .md ul, .md ol, .md blockquote { margin: 0 0 10px; overflow-wrap: anywhere; }
+
+.md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font-size: 14px; }
+
+.md ul, .md ol { padding-left: 20px; }
+
+.md li { margin-bottom: 4px; }
+
+.md blockquote {
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+  color: var(--muted);
+}
+
+.md hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+
+.md code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* Code scrolls inside its own box. Nothing in a message may widen the page. */
+.md-code {
+  position: relative;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow-x: auto;
+}
+
+.md-code code { background: none; border: none; padding: 0; }
+
+.md-lang {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Machine data: monospace, selectable, scrollable, never elided. */
+.raw {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* ---------------------------------------------------------------- thinking and tool cards */
+
+.thinking, .tool {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  margin: 0 0 10px;
+}
+
+.thinking > summary, .tool > summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.thinking > summary { font-style: italic; }
+
+.thinking-body {
+  padding: 0 10px 10px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.tool-name { color: var(--text); font-weight: 600; }
+
+.tool-summary {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tool-body { padding: 0 10px 10px; }
+
+.tool-label {
+  margin: 0 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.tool-body .tool-label:not(:first-child) { margin-top: 6px; }
+
+/* The label is upper-cased for the eye; the identifier next to it is not. A tool use id that has
+   been case-folded is no longer the id — it cannot be grepped out of a log. */
+.tool-label .mono { text-transform: none; }
+
+.dispatch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 0 10px;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  min-width: 0;
+}
+
+.dispatch.running { border-color: var(--running); border-style: solid; }
+
+.dispatch-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* The agent's name never elides — it is the one thing this row exists to say. The description
+   yields the space instead. */
+.dispatch .agent { flex: none; overflow: visible; text-overflow: clip; }
+.dispatch .desc { grid-column: auto; min-width: 0; }
+.dispatch .elapsed { margin-left: auto; flex: none; }
+
+/* ---------------------------------------------------------------- inline notices */
+
+.chat-error, .chat-warning {
+  border: 1px solid var(--error);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.chat-warning {
+  border-color: var(--stale);
+  color: var(--stale);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.chat-error { color: var(--error); }
+.chat-error-message { margin: 0; }
+.chat-error-hint { margin: 4px 0 0; color: var(--muted); }
+.chat-error summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 6px; }
+.chat-error .raw { margin-top: 6px; color: var(--text); }
+
+.activity-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.activity-line .dot { grid-row: auto; }
+
+/* ---------------------------------------------------------------- composer */
+
+.composer {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.composer textarea:disabled {
+  background: var(--bg);
+  color: var(--muted);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.composer-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.composer-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.confirm-text { font-size: 12px; color: var(--stale); }
+
+/* ---------------------------------------------------------------- session footer */
+
+.session-footer { border-top: 1px solid var(--line); padding-top: 8px; }
+
+.session-footer dl {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.session-footer dt {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.session-footer dd { margin: 0 0 0 -8px; color: var(--text); }
+
+/* A session id is machine data: it wraps rather than eliding, because a truncated id is one you
+   cannot paste into `claude --resume`. */
+.session-footer .session-id { overflow-wrap: anywhere; }
+
+/* A failed turn no longer prints its own error box when the last answer already carried the same
+   sentence, so this marker is what states it. */
+.session-footer .failed { color: var(--error); }
+
+.session-footer .empty { margin: 0; font-size: 11px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- permission modal */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 10;
+}
+
+.modal {
+  width: min(640px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--stale);
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modal-queue {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.modal-clock {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--stale);
+  font-variant-numeric: tabular-nums;
+}
+
+.modal-clock.expired { color: var(--error); }
+
+.modal h2 {
+  margin: 10px 0 8px;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.modal-meta {
+  margin: 0 0 10px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 12px;
+}
+
+.modal-meta dt {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.modal-meta dd { margin: 0; overflow-wrap: anywhere; }
+
+.modal-description { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+
+.modal-input { max-height: 240px; }
+
+.modal-blind {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--error);
+  border-radius: 4px;
+  color: var(--error);
+  font-size: 13px;
+}
+
+.modal-failure { margin: 10px 0 0; color: var(--error); font-size: 12px; }
+
+.modal-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+
+.modal-foot { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+
+@media (max-width: 900px) {
+  .chat { height: auto; }
+  .transcript { max-height: 60vh; }
 }

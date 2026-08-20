@@ -7,7 +7,7 @@ const NAV = [
   { path: '/activity', label: 'Activity' },
 ];
 
-export function Layout({ rail, children }) {
+export function Layout({ rail, sidebar, children }) {
   const { path, navigate } = useRoute();
 
   return (
@@ -25,6 +25,7 @@ export function Layout({ rail, children }) {
             </li>
           ))}
         </ul>
+        {sidebar}
       </nav>
       <main>{children}</main>
       {rail}

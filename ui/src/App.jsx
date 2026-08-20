@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Layout } from './components/Layout.jsx';
 import { LiveRail } from './components/LiveRail.jsx';
+import { ProjectSwitcher } from './components/ProjectSwitcher.jsx';
+import { PermissionModal } from './components/PermissionModal.jsx';
 import { Agents } from './pages/Agents.jsx';
 import { Skills } from './pages/Skills.jsx';
 import { Activity } from './pages/Activity.jsx';
+import { Chat } from './pages/Chat.jsx';
 import { useRoute } from './router.jsx';
 import { connectStream, fetchJson } from './api.js';
 import { upsertRun, mergeSnapshot } from './components/runList.js';
+import { useChatSession } from './useChatSession.js';
 
 export function App() {
   const [runs, setRuns] = useState([]);
@@ -18,6 +22,8 @@ export function App() {
   const [hooksInstalled, setHooksInstalled] = useState(true);
   const { path } = useRoute();
   const streamed = useRef(new Set());
+  const session = useChatSession();
+  const { handleEvent } = session;
 
   useEffect(() => {
     const stop = connectStream({
@@ -27,6 +33,13 @@ export function App() {
         setConnectionError(null);
         if (name === 'catalog.changed') {
           setReloadKey((k) => k + 1);
+          return;
+        }
+        // Routed by name before anything looks at `payload.id`. A `permission.request` carries an
+        // `id` of its own, and falling through to the run branch would file an approval prompt in
+        // the live rail as if it were a subagent.
+        if (name.startsWith('chat.') || name.startsWith('permission.')) {
+          handleEvent(name, payload);
           return;
         }
         if (!payload?.id) return;
@@ -51,7 +64,7 @@ export function App() {
       .catch((e) => setConnectionError(e.message));
 
     return stop;
-  }, []);
+  }, [handleEvent]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -75,10 +88,21 @@ export function App() {
   const page = path === '/agents' ? <Agents agents={catalog.agents} catalogError={catalogError} />
     : path === '/skills' ? <Skills skills={catalog.skills} catalogError={catalogError} />
     : path === '/activity' ? <Activity runs={runs.filter((r) => r.status !== 'running')} hooksInstalled={hooksInstalled} />
-    : <p className="empty">Orchestrator chat arrives in Plan 2. Live agent activity is on the right.</p>;
+    : <Chat session={session} runs={runs} now={now} />;
 
   return (
-    <Layout rail={<LiveRail runs={runs} now={now} />}>
+    <Layout
+      rail={<LiveRail runs={runs} now={now} />}
+      sidebar={(
+        <ProjectSwitcher
+          projects={session.projects}
+          selected={session.selected}
+          onSelect={session.select}
+          onAdd={session.addProject}
+          error={session.projectsError}
+        />
+      )}
+    >
       {/* Never replaces the page: a dropped stream leaves the last known rows on screen, and blanking
           them would destroy the only state the user still has. The clock keeps ticking on those rows,
           so saying the connection is gone is the difference between stale data and a lie. */}
@@ -92,6 +116,17 @@ export function App() {
         </p>
       )}
       {page}
+      {/* Outside the routed page on purpose: a blocked tool call is not a thing the user should be
+          able to walk away from by clicking Agents. */}
+      {session.permissions.length > 0 && (
+        <PermissionModal
+          request={session.permissions[0]}
+          queued={session.permissions.length}
+          now={now}
+          onDecide={session.decide}
+          selectedProject={session.selected}
+        />
+      )}
     </Layout>
   );
 }
