@@ -3,9 +3,10 @@
 A local dashboard for [Claude Code](https://docs.claude.com/en/docs/claude-code): it watches every
 Claude Code session on your machine through hooks, and shows subagents as they dispatch and finish
 in a live rail, alongside a catalog of every agent and skill available to you — with the scope
-(user, project, or plugin) each one comes from.
+(user, project, or plugin) each one comes from. It also drives a Claude session of its own, so you
+can run your orchestrator from the browser and answer its approval prompts and questions there.
 
-![agentpanel dashboard showing the live agent rail](https://raw.githubusercontent.com/dapsverse/claude_dashboard/main/docs/assets/screenshot.png)
+![agentpanel dashboard: the orchestrator chat mid-turn, with each dispatched subagent in the live agent rail on the right](https://raw.githubusercontent.com/dapsverse/claude_dashboard/main/docs/assets/screenshot.png)
 
 ## Install
 
@@ -160,11 +161,11 @@ devDependencies; the dashboard ships prebuilt in `dist/ui`.
 
 ## Not in this release
 
-This is Plan 1 plus the daemon half of Plan 2's orchestrator chat: hooks, the daemon, the catalog,
-the live rail, and the HTTP/SSE surface an SDK session and its approval gate are driven through. The
-chat *interface* — the message view, the approval prompts, the project switcher — is still being
-built, along with agent creation, skill installation, and marketplace browsing. If you were
-expecting to talk to Claude from this dashboard, that is coming — it is not missing by accident.
+Agent creation, skill installation, and marketplace browsing.
+
+Everything else described above ships in this release, the orchestrator chat included: the message
+view, the project switcher, the approval prompts, and the answer sheet for the questions Claude asks
+back.
 
 ## Development
 
