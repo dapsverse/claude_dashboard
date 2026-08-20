@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { LiveRail } from '../src/components/LiveRail.jsx';
 import { formatElapsed } from '../src/components/RunRow.jsx';
 import { upsertRun, mergeSnapshot } from '../src/components/runList.js';
@@ -134,5 +134,66 @@ describe('run list reconciliation (stream vs. snapshot race)', () => {
     const runs = mergeSnapshot([], new Set(), [seenTwice, seenTwice]);
 
     expect(runs).toHaveLength(1);
+  });
+});
+
+describe('LiveRail run detail', () => {
+  it('animates only the rows that are actually running', () => {
+    const { container } = render(
+      <LiveRail runs={[run(), run({ id: 's1:t2', status: 'done', durationMs: 10 })]} now={2000} />,
+    );
+    expect(container.querySelectorAll('.working').length).toBe(1);
+    expect(container.querySelector('.run.running .working')).toBeTruthy();
+  });
+
+  it('expands a row on click and collapses it on a second click', () => {
+    render(<LiveRail runs={[run({ prompt: 'add auth to the login route' })]} now={2000} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    expect(screen.getByText('add auth to the login route')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { expanded: true }));
+    expect(screen.queryByText('add auth to the login route')).toBeNull();
+  });
+
+  it('opens one row at a time', () => {
+    render(<LiveRail runs={[run({ prompt: 'first prompt' }), run({ id: 's1:t2', prompt: 'second prompt' })]} now={2000} />);
+    const [first, second] = screen.getAllByRole('button');
+    fireEvent.click(first);
+    expect(screen.getByText('first prompt')).toBeTruthy();
+    fireEvent.click(second);
+    expect(screen.queryByText('first prompt')).toBeNull();
+    expect(screen.getByText('second prompt')).toBeTruthy();
+  });
+
+  it('says so rather than showing an empty box when no prompt was recorded', () => {
+    render(<LiveRail runs={[run({ prompt: null })]} now={2000} />);
+    fireEvent.click(screen.getAllByRole('button')[0]);
+    expect(screen.getByText(/No prompt was recorded/)).toBeTruthy();
+  });
+
+  // The rail's rows come from the hook path, which only learns that a run opened and later closed.
+  // What the subagent is doing right now comes from the session's own progress events, keyed by the
+  // tool_use id that is the second half of the run id.
+  it('shows what a running subagent is doing, matched by the tool_use half of the run id', () => {
+    render(
+      <LiveRail
+        runs={[run()]}
+        now={2000}
+        taskActivity={{ t1: { kind: 'task_progress', lastToolName: 'Grep', usage: { input_tokens: 900, output_tokens: 100 } } }}
+      />,
+    );
+    expect(screen.getByText('running Grep')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button')[0]);
+    expect(screen.getByText('1,000')).toBeTruthy();
+  });
+
+  it('does not claim live activity for a finished run', () => {
+    render(
+      <LiveRail
+        runs={[run({ status: 'done', durationMs: 4000 })]}
+        now={2000}
+        taskActivity={{ t1: { kind: 'task_progress', lastToolName: 'Grep' } }}
+      />,
+    );
+    expect(screen.queryByText('running Grep')).toBeNull();
   });
 });

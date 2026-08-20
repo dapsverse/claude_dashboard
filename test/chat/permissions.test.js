@@ -168,3 +168,167 @@ test('no path ever returns null, which would block the tool forever', async () =
   }
   gate.close();
 });
+
+// ---------------------------------------------------------------- AskUserQuestion
+//
+// The CLI hands this tool to `canUseTool` unconditionally — its own `checkPermissions` always answers
+// `behavior: 'ask'` — because the host is its question renderer. An allow that carries no `answers`
+// in `updatedInput` produces the tool result "The user did not answer the questions.", which is how
+// a plain approval prompt turns into a model reporting that nobody replied.
+
+const QUESTION_INPUT = {
+  questions: [{
+    question: 'Which database?',
+    header: 'Database',
+    multiSelect: false,
+    options: [
+      { label: 'Postgres', description: 'Relational', preview: 'CREATE TABLE …' },
+      { label: 'SQLite', description: 'Embedded' },
+    ],
+  }],
+};
+
+test('an AskUserQuestion request is broadcast as a question, with its questions attached', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+
+  const [req] = hub.of('permission.request');
+  assert.equal(req.kind, 'question');
+  assert.equal(req.questions.length, 1);
+  assert.equal(req.questions[0].question, 'Which database?');
+  assert.equal(req.questions[0].header, 'Database');
+  assert.equal(req.questions[0].multiSelect, false);
+  assert.deepEqual(req.questions[0].options.map((o) => o.label), ['Postgres', 'SQLite']);
+  assert.equal(req.questions[0].options[0].preview, 'CREATE TABLE …');
+
+  gate.resolve(req.id, 'allow', { answers: { 'Which database?': 'Postgres' } });
+  await decision;
+  gate.close();
+});
+
+test('answering a question allows the tool with the answers in updatedInput', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+  const [req] = hub.of('permission.request');
+
+  assert.deepEqual(gate.resolve(req.id, 'allow', { answers: { 'Which database?': 'Postgres' } }), { ok: true, answered: 1 });
+  const result = await decision;
+  assert.equal(result.behavior, 'allow');
+  assert.deepEqual(result.updatedInput.answers, { 'Which database?': 'Postgres' });
+  // The tool reads `questions` back out of its own input to build the result block; dropping it
+  // turns the answer into a crash on the CLI side.
+  assert.deepEqual(result.updatedInput.questions, QUESTION_INPUT.questions);
+  // Derived from the picked option, never taken from the request body.
+  assert.deepEqual(result.updatedInput.annotations, { 'Which database?': { preview: 'CREATE TABLE …' } });
+  gate.close();
+});
+
+test('a multi-select answer is joined into the comma-separated form the tool documents', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const input = {
+    questions: [{
+      question: 'Which features?',
+      header: 'Features',
+      multiSelect: true,
+      options: [{ label: 'auth', description: 'a' }, { label: 'billing', description: 'b' }],
+    }],
+  };
+  const decision = gate.forProject('/p')('AskUserQuestion', input, ctx());
+  const [req] = hub.of('permission.request');
+  gate.resolve(req.id, 'allow', { answers: { 'Which features?': ['auth', 'billing'] } });
+  const result = await decision;
+  assert.equal(result.updatedInput.answers['Which features?'], 'auth, billing');
+  gate.close();
+});
+
+test('an answer to a question that was never asked is dropped rather than passed through', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+  const [req] = hub.of('permission.request');
+  gate.resolve(req.id, 'allow', {
+    answers: { 'Which database?': 'SQLite', 'Should I delete everything?': 'yes' },
+  });
+  const result = await decision;
+  assert.deepEqual(result.updatedInput.answers, { 'Which database?': 'SQLite' });
+  gate.close();
+});
+
+test('notes are carried as annotations, and a preview is never taken from the client', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+  const [req] = hub.of('permission.request');
+  gate.resolve(req.id, 'allow', {
+    answers: { 'Which database?': 'SQLite' },
+    notes: { 'Which database?': '  keep it single-file  ', 'Which database?x': 'ignored' },
+  });
+  const result = await decision;
+  assert.deepEqual(result.updatedInput.annotations, { 'Which database?': { notes: 'keep it single-file' } });
+  gate.close();
+});
+
+test('skipping a question is an allow with no answers, which is the tool own no-answer path', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+  const [req] = hub.of('permission.request');
+  gate.resolve(req.id, 'allow', { answers: {} });
+  const result = await decision;
+  assert.equal(result.behavior, 'allow');
+  assert.deepEqual(result.updatedInput.answers, {});
+  assert.equal('annotations' in result.updatedInput, false);
+  gate.close();
+});
+
+test('dismissing a question denies it with a message about the question, not about a tool call', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+  const [req] = hub.of('permission.request');
+  gate.resolve(req.id, 'deny');
+  const result = await decision;
+  assert.equal(result.behavior, 'deny');
+  assert.match(result.message, /question/i);
+  gate.close();
+});
+
+test('always-allow is refused for a question, because a session rule would answer nothing forever', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+  const [req] = hub.of('permission.request');
+  assert.deepEqual(gate.resolve(req.id, 'always'), { ok: false, reason: 'bad_decision' });
+  // Still pending, so it can be answered properly.
+  gate.resolve(req.id, 'allow', { answers: { 'Which database?': 'SQLite' } });
+  assert.equal((await decision).behavior, 'allow');
+  gate.close();
+});
+
+test('an AskUserQuestion whose input is not renderable degrades to an ordinary approval prompt', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  // Options are what make a question answerable; without them there is nothing to click.
+  const decision = gate.forProject('/p')('AskUserQuestion', { questions: [{ question: 'hm?', options: [] }] }, ctx());
+  const [req] = hub.of('permission.request');
+  assert.equal(req.kind, 'tool');
+  assert.equal(req.questions, null);
+  gate.resolve(req.id, 'allow');
+  assert.deepEqual(await decision, { behavior: 'allow' });
+  gate.close();
+});
+
+test('a pending question is restorable after a reload, questions included', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+  const [descriptor] = gate.list('/p');
+  assert.equal(descriptor.kind, 'question');
+  assert.equal(descriptor.questions[0].question, 'Which database?');
+  gate.resolve(descriptor.id, 'allow', { answers: { 'Which database?': 'Postgres' } });
+  await decision;
+  gate.close();
+});

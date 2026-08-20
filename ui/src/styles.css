@@ -102,16 +102,108 @@ main {
 }
 
 .run {
-  display: grid;
-  grid-template-columns: 10px 1fr auto;
-  grid-template-rows: auto auto;
-  column-gap: 8px;
-  align-items: baseline;
-  padding: 8px 0;
   border-bottom: 1px solid var(--line);
 }
 
 .run:last-child { border-bottom: none; }
+
+/* The grid lives on the button, not the list item, so the whole row is one hit target instead of a
+   caret next to text that looks clickable and is not. Everything else about it is un-button-like on
+   purpose — a rail of eight bordered buttons reads as a toolbar, not as a list of agents. */
+.run-head {
+  display: grid;
+  /* Every cell is placed explicitly below. Auto-placement across two spanning children (the status
+     dot, and a description that runs the full width) puts the clock on a row of its own, which is
+     how this row layout breaks the moment anything is added to it. */
+  grid-template-columns: 10px 10px minmax(0, 1fr) auto auto;
+  column-gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The bars column is reserved at a fixed width whether or not a row is running, so a run finishing
+   does not shift its own text sideways. */
+.run-head .dot { grid-column: 1; grid-row: 1 / -1; }
+.run-head .working { grid-column: 2; grid-row: 1; }
+.run-head .agent { grid-column: 3; grid-row: 1; }
+.run-head .elapsed { grid-column: 4; grid-row: 1; }
+.run-head .badge { grid-column: 5; grid-row: 1; }
+.run-head .desc { grid-column: 2 / -1; grid-row: 2; }
+.run-head .doing { grid-column: 2 / -1; grid-row: 3; }
+
+.run-head:hover .agent { color: var(--running); }
+.run-head:focus-visible { outline: 2px solid var(--running); outline-offset: 2px; }
+
+/* Three bars that rise and fall while the run is running: the rail should say "still working" at a
+   glance, without reading a clock that only advances one digit per second. */
+.working {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+  align-self: center;
+}
+
+.working i {
+  width: 2px;
+  height: 4px;
+  background: var(--running);
+  animation: hammering 1s ease-in-out infinite;
+}
+
+.working i:nth-child(2) { animation-delay: 0.18s; }
+.working i:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes hammering {
+  0%, 100% { height: 3px; opacity: 0.5; }
+  50% { height: 10px; opacity: 1; }
+}
+
+/* What the subagent is doing right now, on its own line under the description. Only ever present for
+   a running row that the session has actually reported progress for. */
+.doing {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--running);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-detail {
+  padding: 0 0 10px 18px;
+  font-size: 12px;
+}
+
+.run-detail dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin: 0 0 8px;
+}
+
+.run-detail dt { color: var(--muted); }
+.run-detail dd { margin: 0; overflow-wrap: anywhere; }
+
+.run-prompt {
+  max-height: 180px;
+  font-size: 11px;
+}
+
+.run-path {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
 
 .dot {
   width: 8px;
@@ -181,6 +273,7 @@ main {
 .badge.done { border-color: var(--done); color: var(--done); }
 .badge.error { border-color: var(--error); color: var(--error); }
 .badge.stale { border-color: var(--stale); color: var(--stale); }
+.badge.asking { border-color: var(--running); color: var(--running); }
 .badge.user { border-color: var(--scope-user); color: var(--scope-user); }
 .badge.project { border-color: var(--scope-project); color: var(--scope-project); }
 .badge.plugin { border-color: var(--scope-plugin); color: var(--scope-plugin); }
@@ -306,6 +399,9 @@ table.activity td:first-child {
 
 @media (prefers-reduced-motion: reduce) {
   .dot.running { animation: none; }
+  /* Held at the tallest frame rather than the shortest: three stubs read as a broken glyph, three
+     full bars read as an indicator that simply is not moving. */
+  .working i { animation: none; height: 10px; opacity: 1; }
 }
 
 @media (max-width: 900px) {
@@ -842,6 +938,85 @@ pre:focus-visible {
 .modal-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 
 .modal-foot { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+
+/* ---------------------------------------------------------------- question sheet */
+
+/* Wider than the approval prompt and scrollable: up to four questions, each with four options that
+   may carry a description and a preview block, is genuinely a form rather than a confirmation. */
+.modal.question {
+  max-width: 720px;
+  max-height: 84vh;
+  overflow-y: auto;
+}
+
+.qlist { display: flex; flex-direction: column; gap: 14px; }
+
+.qblock {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px 12px;
+  margin: 0;
+}
+
+.qblock legend {
+  padding: 0 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.qtext { font-weight: 600; }
+
+.chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.qopt {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 8px;
+  align-items: start;
+  padding: 6px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.qopt:hover { background: var(--line); }
+.qopt.picked { background: var(--line); }
+.qopt input { margin: 3px 0 0; }
+.qopt-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.qopt-label { font-weight: 600; }
+.qopt-desc { color: var(--muted); font-size: 12px; }
+
+.qopt-preview {
+  max-height: 160px;
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+.qinput {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.qinput:focus-visible { outline: 2px solid var(--running); outline-offset: 1px; }
+.qinput.note { font-size: 11px; color: var(--muted); }
+.qinput.note:focus { color: var(--text); }
 
 @media (max-width: 900px) {
   .chat { height: auto; }

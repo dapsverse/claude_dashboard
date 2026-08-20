@@ -137,6 +137,37 @@ describe('App event routing', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
+  // AskUserQuestion arrives through the same channel as an approval prompt because the CLI makes the
+  // host its question renderer. Drawing the approval modal for it is what left the user clicking
+  // Allow and the model reporting that nobody answered.
+  it('draws the answer sheet for a question, not the approval prompt', async () => {
+    vi.stubGlobal('fetch', respond());
+    render(<App />);
+    await screen.findByText('programmer');
+
+    await act(async () => {
+      FakeEventSource.instances[0].emit('permission.request', {
+        ...REQUEST,
+        toolName: 'AskUserQuestion',
+        kind: 'question',
+        questions: [{
+          question: 'Which database?',
+          header: 'Database',
+          multiSelect: false,
+          options: [{ label: 'Postgres', description: 'Relational' }, { label: 'SQLite', description: 'Embedded' }],
+        }],
+      });
+    });
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toMatch(/Claude is asking/);
+    expect(dialog.textContent).not.toMatch(/approval needed/);
+    expect(dialog.textContent).toMatch(/Which database\?/);
+    expect(screen.getByRole('radio', { name: /Postgres/ })).toBeTruthy();
+    // "Always allow" would let a session rule answer every later question with silence.
+    expect(dialog.textContent).not.toMatch(/Always allow/);
+  });
+
   it('removes the prompt when the daemon reports it settled by anything at all', async () => {
     vi.stubGlobal('fetch', respond());
     render(<App />);

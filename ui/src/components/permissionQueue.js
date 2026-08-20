@@ -18,6 +18,14 @@ export function addRequest(queue, payload) {
     id: payload.id,
     projectPath: payload.projectPath ?? null,
     toolName: payload.toolName ?? null,
+    // 'question' draws the answer sheet, anything else the approval prompt. Taken from the payload
+    // rather than derived from the tool name so a build that renames AskUserQuestion degrades to a
+    // plain prompt instead of to an unanswerable question.
+    kind: payload.kind === 'question' ? 'question' : 'tool',
+    // Unlike `input`, the questions survive a reload: the history descriptor carries them because
+    // they are the model's own text, not a command about to run, so re-rendering them after a
+    // refresh is the difference between answering the question and stranding it.
+    questions: Array.isArray(payload.questions) ? payload.questions : null,
     input: payload.input ?? null,
     toolUseId: payload.toolUseId ?? null,
     agentId: payload.agentId ?? null,
@@ -35,7 +43,15 @@ export function addRequest(queue, payload) {
   // A live event for a prompt we only had a descriptor for: keep the position in the queue, take the
   // fuller payload.
   const next = [...queue];
-  next[existing] = { ...next[existing], ...request, restored: request.restored && next[existing].restored };
+  next[existing] = {
+    ...next[existing],
+    ...request,
+    // A later payload that carries no questions must not erase the ones already on screen: the
+    // history descriptor and the live event arrive in either order, and only one of them is
+    // guaranteed to have them.
+    questions: request.questions ?? next[existing].questions,
+    restored: request.restored && next[existing].restored,
+  };
   return next;
 }
 

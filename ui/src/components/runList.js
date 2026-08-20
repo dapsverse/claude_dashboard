@@ -7,6 +7,17 @@
 // read), so an event for a run can arrive first. When the snapshot then lands, it must not
 // overwrite what the stream already reported — the snapshot is a picture of an earlier moment.
 
+// A run id is `${sessionId}:${toolUseId}` — the correlator builds it that way so a dispatch can be
+// matched from either end. The session's own progress events are keyed by the tool_use id alone, so
+// splitting it back out here is what lets a rail row show what its subagent is doing. Split on the
+// first colon: a session id is a uuid and never contains one, while nothing guarantees that of a
+// tool_use id.
+export function runToolUseId(run) {
+  const id = typeof run?.id === 'string' ? run.id : '';
+  const at = id.indexOf(':');
+  return at < 0 ? '' : id.slice(at + 1);
+}
+
 /** Insert or replace `run` by id, keeping at most one row per id. */
 export function upsertRun(runs, run) {
   if (!run?.id) return runs;

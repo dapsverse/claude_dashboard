@@ -20,8 +20,97 @@ const DENY_TIMEOUT = 'No answer in the agentpanel dashboard within the approval 
 const DENY_ABORTED = 'The session was interrupted before this permission request was answered, so the tool was not run.';
 const DENY_CLOSED = 'agentpanel stopped while this permission request was open, so the tool was not run.';
 const DENY_USER = 'The user denied this tool call in the agentpanel dashboard.';
+const DENY_QUESTION = 'The user dismissed this question in the agentpanel dashboard without answering it. Do not re-ask it unless they raise the subject again.';
 
 const DECISIONS = new Set(['allow', 'deny', 'always']);
+
+// AskUserQuestion is not a tool that *does* something the user approves; it is a question, and the
+// CLI hands it to `canUseTool` precisely because the host is its renderer. Its own
+// `checkPermissions` returns `behavior: 'ask'` unconditionally and its result block reads "The user
+// did not answer the questions." unless the allow carries the answers back in `updatedInput`. A
+// dashboard that treats it as a generic prompt shows an Allow button, answers nothing, and leaves
+// the model reporting that nobody replied.
+export const QUESTION_TOOL = 'AskUserQuestion';
+
+// The tool's own schema caps questions at 4 and options at 4. Enforced here too: these strings are
+// rendered in a browser and echoed back into a tool result, and neither should be unbounded because
+// a model emitted something malformed.
+const MAX_QUESTIONS = 4;
+const MAX_OPTIONS = 8;
+const MAX_ANSWER_CHARS = 2000;
+const MAX_NOTES_CHARS = 2000;
+
+const str = (value, max) => (typeof value === 'string' && value.trim() !== '' ? value.slice(0, max) : null);
+
+// Returns the questions in the shape the browser renders, or null when the input is not something
+// that can be rendered as a question at all — in which case the request degrades to an ordinary
+// approval prompt rather than to a modal with nothing in it.
+export function normalizeQuestions(input) {
+  const raw = input?.questions;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const questions = [];
+  for (const entry of raw.slice(0, MAX_QUESTIONS)) {
+    const question = str(entry?.question, 2000);
+    if (question === null) continue;
+    const options = (Array.isArray(entry?.options) ? entry.options : [])
+      .slice(0, MAX_OPTIONS)
+      .map((option) => ({
+        label: str(option?.label, 500),
+        description: str(option?.description, 2000),
+        preview: str(option?.preview, 8000),
+      }))
+      .filter((option) => option.label !== null);
+    if (options.length === 0) continue;         // nothing to click: not renderable as a question
+    questions.push({
+      question,
+      header: str(entry?.header, 60),
+      options,
+      multiSelect: entry?.multiSelect === true,
+    });
+  }
+  return questions.length === 0 ? null : questions;
+}
+
+// The answers that go back to the tool, rebuilt from the questions we actually asked rather than
+// trusted as sent. A key the model never asked about, or a value that is not a string, is dropped:
+// the tool result is text the model will act on, and the browser does not get to put arbitrary keys
+// in it. Multi-select arrives as an array and is joined with ", ", which is the format the tool's
+// own output contract documents.
+function sanitizeAnswers(questions, raw) {
+  if (raw === null || typeof raw !== 'object') return {};
+  const asked = new Map(questions.map((q) => [q.question, q]));
+  const answers = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!asked.has(key)) continue;
+    const text = Array.isArray(value)
+      ? value.filter((v) => typeof v === 'string').join(', ')
+      : typeof value === 'string' ? value : '';
+    const trimmed = text.trim();
+    if (trimmed === '') continue;
+    answers[key] = trimmed.slice(0, MAX_ANSWER_CHARS);
+  }
+  return answers;
+}
+
+// `annotations.preview` is derived from the question, never taken from the request body: it is the
+// preview text of the option the user picked, and the browser echoing its own string back would let
+// a tool result claim the user was shown something they were not. Notes are the user's own words and
+// are the one part that does come from the client.
+function buildAnnotations(questions, answers, notes) {
+  const source = notes === null || typeof notes !== 'object' ? {} : notes;
+  const annotations = {};
+  for (const question of questions) {
+    const answer = answers[question.question];
+    const picked = answer === undefined ? undefined : question.options.find((o) => o.label === answer);
+    const note = str(source[question.question], MAX_NOTES_CHARS);
+    const entry = {
+      ...(picked?.preview ? { preview: picked.preview } : {}),
+      ...(note === null ? {} : { notes: note.trim() }),
+    };
+    if (Object.keys(entry).length > 0) annotations[question.question] = entry;
+  }
+  return Object.keys(annotations).length === 0 ? null : annotations;
+}
 
 export function createPermissionGate({
   hub,
@@ -54,6 +143,11 @@ export function createPermissionGate({
 
     const id = newId();
     const ts = now();
+    // A question only renders as a question when its payload actually carries answerable questions.
+    // Anything else — a malformed input, a future shape this build does not understand — falls back
+    // to the ordinary approval prompt, which is honest about what it can and cannot show.
+    const questions = toolName === QUESTION_TOOL ? normalizeQuestions(input) : null;
+    const kind = questions === null ? 'tool' : 'question';
     return new Promise((resolve) => {
       const onAbort = () => settle(id, 'aborted', deny(DENY_ABORTED));
       const timer = setTimeout(() => settle(id, 'timeout', deny(DENY_TIMEOUT)), timeoutMs);
@@ -62,13 +156,19 @@ export function createPermissionGate({
 
       pending.set(id, {
         id, projectPath, toolName, ts, resolve, timer, signal, onAbort,
-        descriptor: { id, projectPath, toolName, toolUseId: toolUseID ?? null, ts },
+        kind, questions, input: input ?? {},
+        descriptor: { id, projectPath, toolName, toolUseId: toolUseID ?? null, ts, kind, questions },
       });
 
       hub.broadcast('permission.request', {
         id,
         projectPath,
         toolName,
+        // 'tool' or 'question'. The browser needs to know which of the two screens to draw before
+        // it looks at anything else, and it must not infer it from the tool name — a build that
+        // renames the tool would then render an unanswerable question as an approval prompt.
+        kind,
+        questions,
         // The raw input, not a redacted preview: approving a command you cannot read is not
         // approval. This crosses an authenticated loopback channel only, and what lands in the
         // database is redacted separately.
@@ -94,10 +194,36 @@ export function createPermissionGate({
       };
     },
 
-    resolve(id, decision) {
+    resolve(id, decision, answer) {
       if (!DECISIONS.has(decision)) return { ok: false, reason: 'bad_decision' };
       if (!pending.has(id)) return { ok: false, reason: 'unknown_request' };
-      const { toolName } = pending.get(id);
+      const entry = pending.get(id);
+      const { toolName } = entry;
+
+      if (entry.kind === 'question') {
+        // "Always allow" is meaningless for a question and actively harmful: a session rule would
+        // let every later question through this gate unanswered, and each one would come back to the
+        // model as "the user did not answer" with no prompt ever shown.
+        if (decision === 'always') return { ok: false, reason: 'bad_decision' };
+        if (decision === 'deny') {
+          settle(id, 'deny', deny(DENY_QUESTION));
+          return { ok: true };
+        }
+        const answers = sanitizeAnswers(entry.questions, answer?.answers);
+        const annotations = buildAnnotations(entry.questions, answers, answer?.notes);
+        // `questions` has to be carried through untouched: the tool reads it back out of its own
+        // input to build the result, and dropping it turns the answer into a crash on the CLI side.
+        settle(id, 'allow', {
+          behavior: 'allow',
+          updatedInput: {
+            ...entry.input,
+            answers,
+            ...(annotations === null ? {} : { annotations }),
+          },
+        });
+        return { ok: true, answered: Object.keys(answers).length };
+      }
+
       const result = decision === 'deny'
         ? deny(DENY_USER)
         : decision === 'always'

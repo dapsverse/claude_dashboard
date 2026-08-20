@@ -3,6 +3,7 @@ import { Layout } from './components/Layout.jsx';
 import { LiveRail } from './components/LiveRail.jsx';
 import { ProjectSwitcher } from './components/ProjectSwitcher.jsx';
 import { PermissionModal } from './components/PermissionModal.jsx';
+import { QuestionModal } from './components/QuestionModal.jsx';
 import { Agents } from './pages/Agents.jsx';
 import { Skills } from './pages/Skills.jsx';
 import { Activity } from './pages/Activity.jsx';
@@ -92,7 +93,7 @@ export function App() {
 
   return (
     <Layout
-      rail={<LiveRail runs={runs} now={now} />}
+      rail={<LiveRail runs={runs} now={now} taskActivity={session.chat.taskActivity} />}
       sidebar={(
         <ProjectSwitcher
           projects={session.projects}
@@ -119,13 +120,27 @@ export function App() {
       {/* Outside the routed page on purpose: a blocked tool call is not a thing the user should be
           able to walk away from by clicking Agents. */}
       {session.permissions.length > 0 && (
-        <PermissionModal
-          request={session.permissions[0]}
-          queued={session.permissions.length}
-          now={now}
-          onDecide={session.decide}
-          selectedProject={session.selected}
-        />
+        session.permissions[0].kind === 'question'
+          // A question and an approval are different acts. Sharing one modal is how a question
+          // ended up behind an Allow button that answered nothing.
+          ? (
+            <QuestionModal
+              request={session.permissions[0]}
+              queued={session.permissions.length}
+              now={now}
+              onAnswer={session.decide}
+              selectedProject={session.selected}
+            />
+          )
+          : (
+            <PermissionModal
+              request={session.permissions[0]}
+              queued={session.permissions.length}
+              now={now}
+              onDecide={session.decide}
+              selectedProject={session.selected}
+            />
+          )
       )}
     </Layout>
   );
