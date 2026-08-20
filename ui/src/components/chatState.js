@@ -21,6 +21,20 @@ export const SURFACED_WARNINGS = new Set([
   'model_refusal_fallback', 'model_refusal_no_fallback',
 ]);
 
+// Activity kinds that describe one dispatched subagent rather than the turn as a whole. These are
+// what makes the live rail's detail view honest: the rail's rows come from the hook path, which only
+// ever learns that a run opened and later closed, while these arrive from the session itself and say
+// what the subagent is doing right now.
+//
+// `task_started`, `task_progress` and `task_notification` carry the dispatch's own `toolUseId`, which
+// is the second half of the run id the rail renders. `tool_progress` carries the *inner* tool's
+// `toolUseId` instead, so it is matched through `taskId` — hence the second map.
+const TASK_ACTIVITY_KINDS = new Set(['task_started', 'task_progress', 'task_notification']);
+
+// Bounded so a long session cannot grow this without limit. Oldest-first-seen is dropped, which for
+// subagent dispatches is also the least likely to still be running.
+const MAX_TASK_ACTIVITY = 64;
+
 // A turn is in flight for exactly these. The composer is disabled here and nowhere else — an
 // `interrupted`, `closed`, `reset` or fatally errored session all accept a new message, and the
 // next send simply starts a fresh session.
@@ -38,6 +52,8 @@ export const initialChatState = {
   dispatches: {},     // toolUseId -> { name, input, agentDispatch }
   result: null,       // the latest chat.result, whose cost and usage are cumulative
   activity: null,
+  taskActivity: {},   // dispatch toolUseId -> what that subagent is doing right now
+  taskKeys: {},       // taskId -> dispatch toolUseId, so tool_progress can be attributed
   completed: [],      // message ids already finalised, so a late delta cannot resurrect them
   seq: 0,
 };
@@ -154,6 +170,52 @@ function applyDelta(state, payload) {
   };
 }
 
+// Folds one activity event into the per-subagent view, returning the same objects untouched when the
+// event says nothing about a dispatch — an identity return is what keeps React from re-rendering the
+// rail on every progress tick that belongs to the main thread.
+function withTaskActivity(state, activity) {
+  const data = activity.data;
+  if (data === null || typeof data !== 'object') return state;
+
+  const taskId = typeof data.taskId === 'string' && data.taskId !== '' ? data.taskId : null;
+  let key = null;
+  if (TASK_ACTIVITY_KINDS.has(activity.kind)) {
+    key = typeof data.toolUseId === 'string' && data.toolUseId !== '' ? data.toolUseId : null;
+  } else if (activity.kind === 'tool_progress' && taskId !== null) {
+    // The inner tool's own toolUseId is not a run id. Only the task it belongs to identifies the row.
+    key = state.taskKeys[taskId] ?? null;
+  }
+  if (key === null) return state;
+
+  const prev = state.taskActivity[key];
+  const keep = (next, old) => (next === undefined || next === null ? old ?? null : next);
+  const entry = {
+    kind: activity.kind,
+    ts: activity.ts ?? prev?.ts ?? null,
+    subagentType: keep(data.subagentType, prev?.subagentType),
+    description: keep(data.description, prev?.description),
+    // `toolName` on a tool_progress, `lastToolName` on a task_progress: the same fact under two
+    // names, and the rail only ever wants "what is it running right now".
+    lastToolName: keep(data.lastToolName ?? data.toolName, prev?.lastToolName),
+    summary: keep(data.summary, prev?.summary),
+    status: keep(data.status, prev?.status),
+    usage: keep(data.usage, prev?.usage),
+    elapsedSeconds: typeof data.elapsedSeconds === 'number' ? data.elapsedSeconds : prev?.elapsedSeconds ?? null,
+  };
+
+  let taskActivity = { ...state.taskActivity, [key]: entry };
+  const keys = Object.keys(taskActivity);
+  if (keys.length > MAX_TASK_ACTIVITY) {
+    taskActivity = Object.fromEntries(keys.slice(keys.length - MAX_TASK_ACTIVITY).map((k) => [k, taskActivity[k]]));
+  }
+
+  const taskKeys = taskId === null || state.taskKeys[taskId] === key
+    ? state.taskKeys
+    : { ...state.taskKeys, [taskId]: key };
+
+  return { ...state, taskActivity, taskKeys };
+}
+
 function applyStatus(state, payload) {
   const sessionId = payload.sessionId ?? state.sessionId;
   switch (payload.state) {
@@ -181,8 +243,10 @@ function applyStatus(state, payload) {
       // A reset discards the conversation on the daemon side — the transcript and the resume id go
       // together, so leaving the messages up would show a history the next session cannot remember.
       return { ...initialChatState, status: 'reset' };
-    case 'activity':
-      return { ...state, sessionId, activity: { kind: payload.kind ?? null, data: payload.data ?? null, ts: payload.ts ?? null } };
+    case 'activity': {
+      const activity = { kind: payload.kind ?? null, data: payload.data ?? null, ts: payload.ts ?? null };
+      return withTaskActivity({ ...state, sessionId, activity }, activity);
+    }
     case 'warning':
       return SURFACED_WARNINGS.has(payload.kind)
         ? appendItem({ ...state, sessionId }, { kind: 'warning', warningKind: payload.kind, data: payload.data ?? null, ts: payload.ts ?? null })

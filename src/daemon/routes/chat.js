@@ -125,7 +125,10 @@ export function chatRoutes({ sessions, permissions, chat, projects, now = Date.n
         const id = decodeURIComponent(ctx.url.pathname.slice(PERMISSION_PREFIX.length));
         if (id === '') return json(res, 404, { error: 'not_found' });
 
-        const verdict = permissions.resolve(id, body.decision);
+        // `answers` and `notes` are only meaningful for an AskUserQuestion prompt, and the gate is
+        // what decides that — it rebuilds both from the questions it actually asked, so a body
+        // carrying them for an ordinary tool call changes nothing.
+        const verdict = permissions.resolve(id, body.decision, { answers: body.answers, notes: body.notes });
         if (!verdict.ok) return json(res, verdict.reason === 'bad_decision' ? 400 : 404, { error: verdict.reason });
         json(res, 200, { ok: true, id, decision: body.decision });
       },

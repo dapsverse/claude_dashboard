@@ -161,9 +161,12 @@ export function useChatSession() {
     }
   }, []);
 
-  const decide = useCallback(async (id, decision) => {
+  // `payload` is only ever populated for an AskUserQuestion prompt, where it carries the answers and
+  // notes. The daemon rebuilds both from the questions it actually asked, so it is never trusted as
+  // sent — this only has to deliver it.
+  const decide = useCallback(async (id, decision, payload) => {
     try {
-      await postJson(`/api/permissions/${encodeURIComponent(id)}`, { decision });
+      await postJson(`/api/permissions/${encodeURIComponent(id)}`, { decision, ...(payload ?? {}) });
       setPermissionNotice(null);
     } catch (err) {
       if (err?.status === 404) {
@@ -171,7 +174,7 @@ export function useChatSession() {
         // settled it. Every one of those denied the tool. Drop the prompt — it can never be
         // answered — but say why, or the modal would appear to close itself.
         setPermissions((queue) => removeRequest(queue, id));
-        setPermissionNotice('That approval request had already been settled — it timed out, or the session was interrupted. The tool did not run.');
+        setPermissionNotice('That request had already been settled — it timed out, or the session was interrupted. Nothing was run and no answer was delivered.');
         return;
       }
       throw err;

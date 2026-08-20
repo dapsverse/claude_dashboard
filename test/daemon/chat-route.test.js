@@ -163,6 +163,49 @@ test('always-allow through the route yields a session-scoped rule and nothing wi
   await h.stop();
 });
 
+test('answers posted for an AskUserQuestion prompt reach the tool in updatedInput', async () => {
+  const h = await boot();
+  await h.post('/api/chat', { projectPath: h.dir, text: 'ask me' });
+  const input = {
+    questions: [{
+      question: 'Which database?',
+      header: 'Database',
+      multiSelect: false,
+      options: [{ label: 'Postgres', description: 'Relational' }, { label: 'SQLite', description: 'Embedded' }],
+    }],
+  };
+  const decision = h.sdk.last().options.canUseTool('AskUserQuestion', input, { signal: new AbortController().signal, toolUseID: 't1' });
+  const [request] = h.hub.of('permission.request');
+  assert.equal(request.kind, 'question');
+
+  const res = await h.post(`/api/permissions/${request.id}`, {
+    decision: 'allow',
+    answers: { 'Which database?': 'SQLite' },
+    notes: { 'Which database?': 'smaller footprint' },
+  });
+  assert.equal(res.status, 200);
+  const result = await decision;
+  assert.deepEqual(result.updatedInput.answers, { 'Which database?': 'SQLite' });
+  assert.deepEqual(result.updatedInput.annotations, { 'Which database?': { notes: 'smaller footprint' } });
+  await h.stop();
+});
+
+test('always-allow is a 400 for a question, so no rule can ever answer one unattended', async () => {
+  const h = await boot();
+  await h.post('/api/chat', { projectPath: h.dir, text: 'ask me' });
+  const input = {
+    questions: [{ question: 'Proceed?', options: [{ label: 'yes', description: 'y' }, { label: 'no', description: 'n' }] }],
+  };
+  const decision = h.sdk.last().options.canUseTool('AskUserQuestion', input, { signal: new AbortController().signal, toolUseID: 't1' });
+  const [request] = h.hub.of('permission.request');
+  const res = await h.post(`/api/permissions/${request.id}`, { decision: 'always' });
+  assert.equal(res.status, 400);
+  assert.deepEqual(await res.json(), { error: 'bad_decision' });
+  await h.post(`/api/permissions/${request.id}`, { decision: 'allow', answers: { 'Proceed?': 'yes' } });
+  assert.equal((await decision).behavior, 'allow');
+  await h.stop();
+});
+
 test('an unknown request id is a 404 and an unknown decision is a 400', async () => {
   const h = await boot();
   const missing = await h.post('/api/permissions/does-not-exist', { decision: 'allow' });

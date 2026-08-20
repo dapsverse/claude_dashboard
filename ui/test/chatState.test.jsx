@@ -416,3 +416,67 @@ describe('readStoredInput', () => {
     expect(readStoredInput(undefined)).toBeNull();
   });
 });
+
+// The live rail's rows come from the hook path, which only ever learns that a run opened and later
+// closed. What a subagent is doing *right now* only exists in the session's own progress events, so
+// the reducer keeps them keyed by the dispatch's tool_use id — the second half of a run id.
+describe('per-subagent activity', () => {
+  const activity = (kind, data) => ({ state: 'activity', kind, data, ts: 10 });
+
+  it('records what a dispatched subagent is doing, keyed by its tool_use id', () => {
+    let state = applyChatEvent(initialChatState, 'chat.status', activity('task_started', {
+      taskId: 'task_1', toolUseId: 'toolu_1', description: 'add auth', subagentType: 'programmer',
+    }));
+    expect(state.taskActivity.toolu_1.subagentType).toBe('programmer');
+    expect(state.taskActivity.toolu_1.description).toBe('add auth');
+
+    state = applyChatEvent(state, 'chat.status', activity('task_progress', {
+      taskId: 'task_1', toolUseId: 'toolu_1', lastToolName: 'Grep',
+    }));
+    expect(state.taskActivity.toolu_1.lastToolName).toBe('Grep');
+    // A later event that omits a field must not blank what an earlier one reported.
+    expect(state.taskActivity.toolu_1.subagentType).toBe('programmer');
+  });
+
+  // A tool_progress carries the *inner* tool's toolUseId, which is not a run id. Only the taskId
+  // identifies the row it belongs to.
+  it('attributes a tool_progress through its taskId, not through its own tool_use id', () => {
+    let state = applyChatEvent(initialChatState, 'chat.status', activity('task_started', {
+      taskId: 'task_1', toolUseId: 'toolu_1', subagentType: 'qa',
+    }));
+    state = applyChatEvent(state, 'chat.status', activity('tool_progress', {
+      taskId: 'task_1', toolUseId: 'toolu_inner', toolName: 'Bash', elapsedSeconds: 12,
+    }));
+    expect(state.taskActivity.toolu_1.lastToolName).toBe('Bash');
+    expect(state.taskActivity.toolu_1.elapsedSeconds).toBe(12);
+    expect(state.taskActivity.toolu_inner).toBeUndefined();
+  });
+
+  it('ignores main-thread progress, which belongs to no row', () => {
+    const state = applyChatEvent(initialChatState, 'chat.status', activity('tool_progress', {
+      toolUseId: 'toolu_main', toolName: 'Read', elapsedSeconds: 2,
+    }));
+    expect(state.taskActivity).toEqual({});
+    // An identity return is what keeps the rail from re-rendering on every main-thread tick.
+    expect(state.taskActivity).toBe(initialChatState.taskActivity);
+  });
+
+  it('keeps a finished turn from blanking a detail panel the user has open', () => {
+    let state = applyChatEvent(initialChatState, 'chat.status', activity('task_progress', {
+      taskId: 'task_1', toolUseId: 'toolu_1', lastToolName: 'Grep',
+    }));
+    state = applyChatEvent(state, 'chat.status', { state: 'idle' });
+    expect(state.activity).toBeNull();
+    expect(state.taskActivity.toolu_1.lastToolName).toBe('Grep');
+  });
+
+  it('is bounded, so a long session cannot grow it without limit', () => {
+    let state = initialChatState;
+    for (let i = 0; i < 80; i += 1) {
+      state = applyChatEvent(state, 'chat.status', activity('task_started', { taskId: `t${i}`, toolUseId: `toolu_${i}` }));
+    }
+    expect(Object.keys(state.taskActivity).length).toBe(64);
+    expect(state.taskActivity.toolu_79).toBeTruthy();
+    expect(state.taskActivity.toolu_0).toBeUndefined();
+  });
+});
