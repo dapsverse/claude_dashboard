@@ -19,12 +19,16 @@ const args = (claudeDir, entry = '/opt/agentpanel/bin/agentpanel.js') => ({
   claudeDir, templatePath: TEMPLATE, nodeBin: '/usr/bin/node', entry,
 });
 
+test('the rendered command silences the SQLite warning, or every /dashboard prints it', () => {
+  assert.match(dashboardCommand('node', '/a/b.js'), /--disable-warning=ExperimentalWarning/);
+});
+
 test('the rendered command quotes the entry path, so a space in it is not two arguments', () => {
   const rendered = renderCommandFile('run: __AGENTPANEL_COMMAND__', {
     nodeBin: '/usr/bin/node', entry: '/Users/me/My Tools/agentpanel/bin/agentpanel.js',
   });
-  assert.equal(rendered, 'run: /usr/bin/node "/Users/me/My Tools/agentpanel/bin/agentpanel.js" dashboard');
-  assert.equal(dashboardCommand('node', '/a/b.js'), 'node "/a/b.js" dashboard');
+  assert.equal(rendered, 'run: /usr/bin/node --disable-warning=ExperimentalWarning "/Users/me/My Tools/agentpanel/bin/agentpanel.js" dashboard');
+  assert.equal(dashboardCommand('node', '/a/b.js'), 'node --disable-warning=ExperimentalWarning "/a/b.js" dashboard');
 });
 
 test('install creates the commands directory and writes an owned file', () => {

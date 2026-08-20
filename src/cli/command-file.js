@@ -27,8 +27,14 @@ export const commandFilePath = (claudeDir) => join(commandsDir(claudeDir), `${CO
  * The shell command the slash command runs. Quoted, because a path with a space in it would
  * otherwise be split into two arguments — and built from `entry` alone, never from anything a user
  * typed, so there is nothing here to interpolate a command into.
+ *
+ * `--disable-warning` for the same reason the hook scripts pass it: `node:sqlite` prints a two-line
+ * experimental warning to stderr on every start, and this command's output is read back into a
+ * Claude Code session. Two lines of Node internals in the transcript, every single invocation, for
+ * a flag the daemon already knows it needs.
  */
-export const dashboardCommand = (nodeBin, entry) => `${nodeBin} "${entry}" dashboard`;
+export const dashboardCommand = (nodeBin, entry) =>
+  `${nodeBin} --disable-warning=ExperimentalWarning "${entry}" dashboard`;
 
 export function renderCommandFile(template, { nodeBin, entry }) {
   return template.split(PLACEHOLDER).join(dashboardCommand(nodeBin, entry));
