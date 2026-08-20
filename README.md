@@ -24,7 +24,8 @@ hooks stop firing with no error anywhere — the dashboard simply never starts a
 if it notices it is running from there.
 
 `init` prints exactly what it is about to change — which hook events it will add to
-`~/.claude/settings.json` and nothing else — and writes nothing until you confirm:
+`~/.claude/settings.json`, and the one file it writes to `~/.claude/commands/` — and writes nothing
+until you confirm:
 
 ```
 agentpanel init --yes
@@ -54,12 +55,32 @@ backup is your safety net for a tool that rewrites your settings, so uninstall o
 
 | Command                | What it does                                                          |
 |-------------------------|------------------------------------------------------------------------|
-| `agentpanel init`       | Installs the five hooks that feed the dashboard. Requires `--yes` to write. |
+| `agentpanel init`       | Installs the five hooks that feed the dashboard, plus the `/dashboard` command. Requires `--yes` to write. |
 | `agentpanel start`      | Starts the daemon by hand (normally the `SessionStart` hook does this). |
 | `agentpanel stop`       | Stops the running daemon.                                             |
 | `agentpanel status`     | Reports whether a daemon is running, and on which port.                |
 | `agentpanel open`       | Opens the dashboard in your default browser, and prints its token URL. |
-| `agentpanel uninstall`  | Removes the hooks, the state directory, and the database.             |
+| `agentpanel dashboard`  | Starts the daemon if needed, then opens the browser. Prints no token — this is what `/dashboard` runs. |
+| `agentpanel uninstall`  | Removes the hooks, the `/dashboard` command, the state directory, and the database. |
+
+### `/dashboard`
+
+`init` also writes `~/.claude/commands/dashboard.md`, so from the next Claude Code session you can
+open the dashboard without leaving the terminal:
+
+```
+/dashboard
+```
+
+It starts the daemon if it is not running, opens your browser already signed in, and reports the
+port. It deliberately **does not print the sign-in URL**: that URL carries a live token for a server
+that can approve tool calls, and a slash command's output is read back into the session and written
+to that session's transcript on disk. Use `agentpanel open` in a plain terminal when you actually
+want the URL.
+
+If you already have a `/dashboard` command of your own, `init` leaves it alone, says so, and installs
+the hooks anyway. `uninstall` removes only a command file carrying agentpanel's own marker — never
+one you wrote.
 
 ## Security
 

@@ -33,6 +33,7 @@
     "bin",
     "src",
     "hooks",
+    "commands",
     "dist",
     "README.md",
     "LICENSE"
