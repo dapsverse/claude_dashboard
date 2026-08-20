@@ -89,3 +89,64 @@ describe('App connection errors', () => {
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   });
 });
+
+describe('App event routing', () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal('EventSource', FakeEventSource);
+    window.localStorage.clear();
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const REQUEST = {
+    id: 'p1', projectPath: '/Users/me/proj', ts: 1000, toolName: 'Write',
+    input: { file_path: '/tmp/x' }, toolUseId: 'toolu_1', agentId: null,
+    reason: null, title: null, description: null, expiresAt: 301000,
+  };
+
+  it('files a chat event with the chat, never as a row in the live rail', async () => {
+    vi.stubGlobal('fetch', respond());
+    render(<App />);
+    await screen.findByText('programmer');
+
+    // A `permission.request` carries an `id` of its own: routed by payload shape rather than by
+    // event name, it would be filed in the rail as if it were a subagent.
+    await act(async () => {
+      FakeEventSource.instances[0].emit('permission.request', REQUEST);
+      FakeEventSource.instances[0].emit('chat.message', {
+        projectPath: '/Users/me/proj', ts: 1000, messageId: 'm1', blocks: [{ type: 'text', text: 'hi' }],
+      });
+    });
+
+    const rail = screen.getByLabelText('Live agents');
+    expect(rail.textContent).not.toMatch(/Write/);
+    expect(rail.textContent).not.toMatch(/p1/);
+  });
+
+  it('puts an approval prompt above the page, so it cannot be walked away from', async () => {
+    vi.stubGlobal('fetch', respond());
+    render(<App />);
+    await screen.findByText('programmer');
+
+    await act(async () => { FakeEventSource.instances[0].emit('permission.request', REQUEST); });
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toMatch(/approval needed/);
+
+    // Navigating to another section leaves the prompt on screen: the tool call is still blocked.
+    await act(async () => { screen.getByText('Agents').click(); });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('removes the prompt when the daemon reports it settled by anything at all', async () => {
+    vi.stubGlobal('fetch', respond());
+    render(<App />);
+    await screen.findByText('programmer');
+
+    await act(async () => { FakeEventSource.instances[0].emit('permission.request', REQUEST); });
+    await screen.findByRole('dialog');
+    await act(async () => {
+      FakeEventSource.instances[0].emit('permission.resolved', { id: 'p1', projectPath: '/Users/me/proj', decision: 'timeout', ts: 2000 });
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
