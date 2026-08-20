@@ -4,7 +4,7 @@
 // and none is `public`, so the daemon's Origin + token guard runs before any of them — a page on
 // another 127.0.0.1 port cannot start a session, answer a permission prompt, or reset a
 // conversation through the browser's ambient cookie.
-import { statSync, realpathSync } from 'node:fs';
+import { statSync, realpathSync, mkdirSync } from 'node:fs';
 import { isAbsolute, resolve, basename } from 'node:path';
 import { json, readJson } from './body.js';
 
@@ -20,6 +20,38 @@ export function normalizeProjectPath(value) {
     return statSync(real).isDirectory() ? real : null;
   } catch {
     return null;                                // absent, unreadable, or not a directory
+  }
+}
+
+// Why the add-project route needs more than `normalizeProjectPath`'s yes/no: "that is not a
+// directory on this machine" is a dead end for the two mistakes people actually make — a path typed
+// without its leading slash, and a folder that simply does not exist yet. Both have an obvious next
+// step, and the UI can only offer it if the reason is distinguishable here.
+//
+//   { ok: true, path }                  — resolved, exists, is a directory
+//   { ok: false, reason: 'empty' }      — nothing usable was sent
+//   { ok: false, reason: 'not_absolute', suggestion } — `Users/me/x`; the suggestion adds the slash
+//   { ok: false, reason: 'missing', path }           — nothing there yet; `path` is what we'd create
+//   { ok: false, reason: 'not_a_directory', path }   — a file is in the way; nothing to offer
+//   { ok: false, reason: 'unreadable', path, detail } — it exists but we cannot stat it
+export function classifyProjectPath(value) {
+  if (typeof value !== 'string' || value.trim() === '') return { ok: false, reason: 'empty' };
+  const candidate = value.trim();
+  if (!isAbsolute(candidate)) {
+    return { ok: false, reason: 'not_absolute', suggestion: `/${candidate.replace(/^\/+/, '')}` };
+  }
+  try {
+    const real = realpathSync(candidate);
+    return statSync(real).isDirectory()
+      ? { ok: true, path: real }
+      : { ok: false, reason: 'not_a_directory', path: real };
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { ok: false, reason: 'missing', path: resolve(candidate) };
+    // ENOTDIR is a file somewhere *along* the path rather than at the end of it — `/tmp/notes.txt/x`.
+    // It is the same problem as the path itself being a file, and it has the same answer: this can
+    // never become a directory, so it is reported rather than offered as something to create.
+    if (err?.code === 'ENOTDIR') return { ok: false, reason: 'not_a_directory', path: resolve(candidate) };
+    return { ok: false, reason: 'unreadable', path: resolve(candidate), detail: err?.code ?? String(err) };
   }
 }
 
@@ -122,10 +154,35 @@ export function chatRoutes({ sessions, permissions, chat, projects, now = Date.n
       handler: async (req, res) => {
         const body = await readJson(req, res);
         if (body === undefined) return;
-        const path = normalizeProjectPath(body.path);
-        if (path === null) return json(res, 400, { error: 'bad_project' });
-        const project = projects.add({ path, name: basename(path) || path, at: now() });
-        json(res, 201, { project });
+        const verdict = classifyProjectPath(body.path);
+
+        // Creating the folder is a second, explicit request — never inferred from the first. The UI
+        // shows the exact path it would create and the user asks for it by name, because `mkdir -p`
+        // on a typo is how you end up with a tree of empty directories you never meant to make.
+        if (!verdict.ok && verdict.reason === 'missing' && body.create === true) {
+          try {
+            mkdirSync(verdict.path, { recursive: true });
+          } catch (err) {
+            return json(res, 400, { error: 'create_failed', path: verdict.path, detail: err?.code ?? String(err) });
+          }
+          const created = classifyProjectPath(verdict.path);
+          if (!created.ok) {
+            return json(res, 400, { error: 'create_failed', path: verdict.path, detail: created.reason });
+          }
+          const project = projects.add({ path: created.path, name: basename(created.path) || created.path, at: now() });
+          return json(res, 201, { project, created: true });
+        }
+
+        if (!verdict.ok) {
+          // `bad_project` is kept as the code for "nothing usable was sent" so a client that only
+          // knows the old contract still reads a familiar error for the case it was written for.
+          const error = verdict.reason === 'empty' ? 'bad_project' : verdict.reason;
+          const { ok, reason, ...rest } = verdict;      // `ok: false` is the status code's job
+          return json(res, 400, { error, ...rest });
+        }
+
+        const project = projects.add({ path: verdict.path, name: basename(verdict.path) || verdict.path, at: now() });
+        json(res, 201, { project, created: false });
       },
     },
   ];

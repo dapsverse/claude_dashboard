@@ -94,13 +94,42 @@ describe('useChatSession — project selection', () => {
   });
 
   it('adds a project and switches to it', async () => {
-    const { captured, Probe } = harness({
+    const { captured, fetchMock, Probe } = harness({
       posts: { '/api/projects': async (body) => ({ ok: true, status: 201, payload: { project: { path: body.path, name: 'new' } } }) },
     });
     render(<Probe />);
     await waitFor(() => expect(session(captured).selected).toBe(PROJECT));
     await act(async () => { await session(captured).addProject('/Users/me/new'); });
     await waitFor(() => expect(session(captured).selected).toBe('/Users/me/new'));
+
+    // `create` is never inferred: an add that was not asked to make a folder must not ask for one.
+    const body = JSON.parse(fetchMock.mock.calls.findLast(([p, o]) => p === '/api/projects' && o?.method === 'POST')[1].body);
+    expect(body).toEqual({ path: '/Users/me/new', create: false });
+  });
+
+  it('passes the create flag through only when the caller asked for it', async () => {
+    const { captured, fetchMock, Probe } = harness({
+      posts: { '/api/projects': async (body) => ({ ok: true, status: 201, payload: { project: { path: body.path, name: 'new' }, created: true } }) },
+    });
+    render(<Probe />);
+    await waitFor(() => expect(session(captured).selected).toBe(PROJECT));
+    await act(async () => { await session(captured).addProject('/Users/me/new', { create: true }); });
+
+    const body = JSON.parse(fetchMock.mock.calls.findLast(([p, o]) => p === '/api/projects' && o?.method === 'POST')[1].body);
+    expect(body).toEqual({ path: '/Users/me/new', create: true });
+  });
+
+  it('surfaces the daemon\'s reason so the switcher can offer the next step', async () => {
+    const { captured, Probe } = harness({
+      posts: { '/api/projects': async () => ({ ok: false, status: 400, payload: { error: 'missing', path: '/Users/me/new' } }) },
+    });
+    render(<Probe />);
+    await waitFor(() => expect(session(captured).selected).toBe(PROJECT));
+    await act(async () => {
+      await expect(session(captured).addProject('/Users/me/new')).rejects.toMatchObject({
+        message: 'missing', status: 400, body: { path: '/Users/me/new' },
+      });
+    });
   });
 });
 
