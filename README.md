@@ -5,7 +5,7 @@ Claude Code session on your machine through hooks, and shows subagents as they d
 in a live rail, alongside a catalog of every agent and skill available to you — with the scope
 (user, project, or plugin) each one comes from.
 
-![agentpanel dashboard showing the live agent rail](https://raw.githubusercontent.com/dapsverse/agentpanel/main/docs/assets/screenshot.png)
+![agentpanel dashboard showing the live agent rail](https://raw.githubusercontent.com/dapsverse/claude_dashboard/main/docs/assets/screenshot.png)
 
 ## Install
 

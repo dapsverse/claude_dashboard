@@ -12,11 +12,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dapsverse/agentpanel.git"
+    "url": "git+https://github.com/dapsverse/claude_dashboard.git"
   },
-  "homepage": "https://github.com/dapsverse/agentpanel#readme",
+  "homepage": "https://github.com/dapsverse/claude_dashboard#readme",
   "bugs": {
-    "url": "https://github.com/dapsverse/agentpanel/issues"
+    "url": "https://github.com/dapsverse/claude_dashboard/issues"
   },
   "type": "module",
   "bin": {
