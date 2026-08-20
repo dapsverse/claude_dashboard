@@ -1,7 +1,7 @@
 // test/daemon/chat-route.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, realpathSync, existsSync, statSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from '../../src/daemon/server.js';
@@ -225,12 +225,106 @@ test('projects are listed, added once, and rejected when the path is not a direc
   await h.post('/api/projects', { path: h.dir });
   assert.equal((await (await h.get('/api/projects')).json()).projects.length, 1);
 
-  for (const path of [join(h.dir, 'missing'), 'relative', '', null]) {
+  for (const path of ['', null, '   ']) {
     const res = await h.post('/api/projects', { path });
     assert.equal(res.status, 400);
     assert.equal((await res.json()).error, 'bad_project');
   }
   await h.stop();
+});
+
+// "That is not a directory on this machine" is true and useless: the reason has to be specific
+// enough for the UI to offer the next step, or the form is a dead end.
+//
+// These use `t.after` rather than a trailing `await h.stop()`: a failed assertion skips the stop,
+// which leaves a listening server holding the event loop open and turns one failure into a hung
+// suite that reports nothing at all.
+test('a rejected project path says which mistake it was', async (t) => {
+  const h = await boot();
+  t.after(() => h.stop());
+
+  const relative = await h.post('/api/projects', { path: 'Users/me/code' });
+  assert.equal(relative.status, 400);
+  assert.deepEqual(await relative.json(), { error: 'not_absolute', suggestion: '/Users/me/code' });
+
+  const missing = await h.post('/api/projects', { path: join(h.dir, 'not-there') });
+  assert.equal(missing.status, 400);
+  assert.deepEqual(await missing.json(), { error: 'missing', path: join(h.dir, 'not-there') });
+
+  writeFileSync(join(h.dir, 'a-file'), 'x');
+  const file = await h.post('/api/projects', { path: join(h.dir, 'a-file') });
+  assert.equal(file.status, 400);
+  assert.equal((await file.json()).error, 'not_a_directory');
+
+  // A file *along* the path, not at the end of it. Same answer: it can never become a directory.
+  const under = await h.post('/api/projects', { path: join(h.dir, 'a-file', 'child') });
+  assert.equal((await under.json()).error, 'not_a_directory');
+});
+
+test('a missing directory is created only when the request asks for it', async (t) => {
+  const h = await boot();
+  t.after(() => h.stop());
+  const target = join(h.dir, 'new-project');
+
+  // The plain add must not create anything — that is what makes the offer an explicit second step.
+  await h.post('/api/projects', { path: target });
+  assert.equal(existsSync(target), false);
+
+  const created = await h.post('/api/projects', { path: target, create: true });
+  assert.equal(created.status, 201);
+  const body = await created.json();
+  assert.equal(body.created, true);
+  assert.equal(statSync(target).isDirectory(), true);
+  // Stored under its real path, so the symlinked and unsymlinked spellings stay one session.
+  assert.equal(body.project.path, realpathSync(target));
+  assert.equal(body.project.name, 'new-project');
+
+  // Adding a directory that already exists still reports that it created nothing.
+  const again = await h.post('/api/projects', { path: target, create: true });
+  assert.equal((await again.json()).created, false);
+});
+
+test('creating a path makes the whole missing chain', async (t) => {
+  const h = await boot();
+  t.after(() => h.stop());
+  const nested = join(h.dir, 'a', 'b', 'c');
+  const created = await h.post('/api/projects', { path: nested, create: true });
+  assert.equal(created.status, 201);
+  assert.equal(statSync(nested).isDirectory(), true);
+});
+
+test('create is refused for a path that is not merely missing', async (t) => {
+  const h = await boot();
+  t.after(() => h.stop());
+
+  const relative = await h.post('/api/projects', { path: 'Users/me', create: true });
+  assert.equal((await relative.json()).error, 'not_absolute');
+
+  writeFileSync(join(h.dir, 'plain-file'), 'x');
+  const file = await h.post('/api/projects', { path: join(h.dir, 'plain-file'), create: true });
+  assert.equal((await file.json()).error, 'not_a_directory');
+  assert.equal(statSync(join(h.dir, 'plain-file')).isFile(), true);   // never clobbered
+
+  const under = await h.post('/api/projects', { path: join(h.dir, 'plain-file', 'child'), create: true });
+  assert.equal((await under.json()).error, 'not_a_directory');
+});
+
+test('a mkdir the filesystem refuses is reported, not thrown', async (t) => {
+  const h = await boot();
+  t.after(() => h.stop());
+
+  // Read-and-execute only: the daemon may traverse it but not create inside it.
+  const locked = join(h.dir, 'locked');
+  mkdirSync(locked);
+  chmodSync(locked, 0o500);
+  t.after(() => chmodSync(locked, 0o700));       // or the temp dir cannot be cleaned up
+
+  const res = await h.post('/api/projects', { path: join(locked, 'child'), create: true });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.error, 'create_failed');
+  assert.equal(body.detail, 'EACCES');
+  assert.equal(existsSync(join(locked, 'child')), false);
 });
 
 test('a project path is normalised through symlinks so one directory is one session', async () => {

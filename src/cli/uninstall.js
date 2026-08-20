@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mergeHooks } from './hook-config.js';
+import { removeCommandFile, COMMAND_NAME } from './command-file.js';
 import { readRuntime, isAlive } from '../core/runtime-file.js';
 
 // Removing the state directory destroys daemon.json, which is the only handle `stop` has on the
@@ -40,7 +41,7 @@ async function stopRunningDaemon({ runtimeFile, log, timeoutMs, pollMs }) {
   return { stopped: false, pid: info.pid };
 }
 
-export async function runUninstall({ settingsPath, stateDir, log = console.log, timeoutMs = 5000, pollMs = 50 }) {
+export async function runUninstall({ settingsPath, stateDir, claudeDir, log = console.log, timeoutMs = 5000, pollMs = 50 }) {
   const { stopped, pid } = await stopRunningDaemon({
     runtimeFile: join(stateDir, 'daemon.json'), log, timeoutMs, pollMs,
   });
@@ -53,6 +54,14 @@ export async function runUninstall({ settingsPath, stateDir, log = console.log, 
   }
   rmSync(stateDir, { recursive: true, force: true });
   log(`  - removed ${stateDir} (database, logs, runtime file)`);
+
+  if (claudeDir) {
+    const command = removeCommandFile({ claudeDir });
+    if (command.status === 'removed') log(`  - removed ${command.path} (/${COMMAND_NAME})`);
+    // A `/dashboard` without our marker is somebody else's by now, whatever it was when init looked
+    // at it. Deleting a command the user wrote, during an uninstall, would be unforgivable.
+    if (command.status === 'foreign') log(`  - left in place: ${command.path} (not written by agentpanel)`);
+  }
 
   // `init` writes this backup outside stateDir on purpose, as the user's safety net for a tool that
   // edits their settings.json. Deleting it here silently would remove that safety net at exactly the

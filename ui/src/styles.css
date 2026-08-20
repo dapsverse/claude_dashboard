@@ -751,6 +751,10 @@ pre:focus-visible {
 
 .session-footer .empty { margin: 0; font-size: 11px; color: var(--muted); }
 
+/* A rejected path that has an obvious next step offers it inline, under the reason. */
+.project-add .notice p { margin: 0 0 6px; }
+.project-add .notice .btn { width: 100%; }
+
 /* ---------------------------------------------------------------- permission modal */
 
 .modal-backdrop {

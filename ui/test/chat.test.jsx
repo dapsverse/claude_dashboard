@@ -232,13 +232,70 @@ describe('ProjectSwitcher', () => {
     expect(screen.getByTitle('/a')).toBeTruthy();
   });
 
-  it('explains a rejected path in the words of the mistake', async () => {
-    const onAdd = vi.fn().mockRejectedValue(new Error('bad_project'));
+  const reject = (error, body) => vi.fn().mockRejectedValue(Object.assign(new Error(error), { status: 400, body }));
+
+  const openForm = (onAdd) => {
     render(<ProjectSwitcher projects={projects} selected="/a" onSelect={vi.fn()} onAdd={onAdd} error={null} />);
     fireEvent.click(screen.getByText('Add project'));
-    fireEvent.change(screen.getByLabelText('Absolute path'), { target: { value: 'relative/path' } });
+    return screen.getByLabelText('Absolute path');
+  };
+
+  const submit = async (value) => {
+    fireEvent.change(screen.getByLabelText('Absolute path'), { target: { value } });
     await act(async () => { fireEvent.click(screen.getByText('Add')); });
-    expect((await screen.findByRole('alert')).textContent).toMatch(/absolute path to an existing folder/);
+  };
+
+  it('offers the absolute form of a path typed without its leading slash', async () => {
+    const onAdd = reject('not_absolute', { suggestion: '/Users/me/code' });
+    openForm(onAdd);
+    await submit('Users/me/code');
+
+    expect(screen.getByRole('alert').textContent).toMatch(/relative path/);
+    await act(async () => { fireEvent.click(screen.getByText('Use /Users/me/code')); });
+    expect(onAdd).toHaveBeenLastCalledWith('/Users/me/code', { create: false });
+  });
+
+  // The dead end this replaced: "that is not a directory on this machine", with nothing to do next.
+  it('offers to create a folder that does not exist yet, naming the exact path', async () => {
+    const onAdd = reject('missing', { path: '/Users/me/new-thing' });
+    openForm(onAdd);
+    await submit('/Users/me/new-thing');
+
+    expect(screen.getByRole('alert').textContent).toMatch(/Nothing exists at \/Users\/me\/new-thing yet/);
+    await act(async () => { fireEvent.click(screen.getByText('Create this folder and add it')); });
+    // Creating is always the second, explicit request — the first submit asked for no such thing.
+    expect(onAdd).toHaveBeenNthCalledWith(1, '/Users/me/new-thing', { create: false });
+    expect(onAdd).toHaveBeenNthCalledWith(2, '/Users/me/new-thing', { create: true });
+  });
+
+  it('offers nothing for a path that can never be a folder', async () => {
+    openForm(reject('not_a_directory', { path: '/Users/me/notes.txt' }));
+    await submit('/Users/me/notes.txt');
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/cannot be a folder/);
+    expect(alert.querySelector('button')).toBeNull();
+  });
+
+  it('reports a refused mkdir with the reason the filesystem gave', async () => {
+    openForm(reject('create_failed', { path: '/locked/child', detail: 'EACCES' }));
+    await submit('/locked/child');
+    expect(screen.getByRole('alert').textContent).toMatch(/could not be created \(EACCES\)/);
+  });
+
+  it('falls back to the raw error for something it has no sentence for', async () => {
+    openForm(reject('request_failed_500', {}));
+    await submit('/Users/me/x');
+    expect(screen.getByRole('alert').textContent).toMatch(/request_failed_500/);
+  });
+
+  it('clears a stale rejection as soon as the path is edited', async () => {
+    openForm(reject('missing', { path: '/Users/me/new-thing' }));
+    await submit('/Users/me/new-thing');
+    expect(screen.getByRole('alert')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Absolute path'), { target: { value: '/Users/me/other' } });
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('offers to add the first project when there are none', () => {

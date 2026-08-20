@@ -179,8 +179,10 @@ export function useChatSession() {
     setPermissions((queue) => removeRequest(queue, id));
   }, []);
 
-  const addProject = useCallback(async (path) => {
-    const { project } = await postJson('/api/projects', { path });
+  // `create` is passed through rather than inferred: the daemon only makes a directory when this
+  // says so, and the switcher only says so after the user has clicked the offer naming the exact path.
+  const addProject = useCallback(async (path, { create = false } = {}) => {
+    const { project } = await postJson('/api/projects', { path, create });
     await loadProjects();
     if (project?.path) select(project.path);
   }, [loadProjects, select]);
