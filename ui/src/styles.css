@@ -1020,6 +1020,29 @@ pre:focus-visible {
 
 /* The lead-up to the question. Scrolls in its own box rather than pushing the options off screen:
    the answer sheet is what the user is here for, and a long preamble must not bury it. */
+/* The minimized question: a bar, not a backdrop, so the transcript behind it stays readable and
+   scrollable. Bottom-right rather than centred, and clear of the composer. */
+.question-dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: min(520px, calc(100vw - 40px));
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.question-dock .modal-clock { margin-left: 0; }
+
+.modal-minimize { padding: 2px 8px; font-size: 11px; }
+
 .qcontext {
   border-left: 2px solid var(--line);
   padding: 0 0 0 10px;

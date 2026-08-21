@@ -129,10 +129,48 @@ describe('QuestionModal', () => {
     expect(onAnswer).toHaveBeenCalledWith('q1', 'allow', { answers: {}, notes: {} });
   });
 
-  it('escape skips rather than blocking the question', () => {
+  // Escape used to skip, which is how the one key that clears a modal out of the way came to tell
+  // Claude that nobody replied.
+  it('escape minimizes and answers nothing', () => {
     const onAnswer = draw();
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    expect(onAnswer).toHaveBeenCalledWith('q1', 'allow', { answers: {}, notes: {} });
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBe(null);
+    expect(screen.getByRole('button', { name: /back to the question/i })).toBeTruthy();
+  });
+
+  it('minimizes to a dock that uncovers the transcript, and reopens', () => {
+    const onAnswer = draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(document.querySelector('.modal-backdrop')).toBe(null);
+    fireEvent.click(screen.getByRole('button', { name: /back to the question/i }));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('Which database?')).toBeTruthy();
+  });
+
+  // The whole point of minimizing is to go and read the lead-up, then come back and answer. Losing
+  // the choice on the way would make it a worse Skip.
+  it('keeps the answers already picked across a minimize', () => {
+    const onAnswer = draw();
+    fireEvent.click(screen.getByRole('radio', { name: /SQLite/ }));
+    fireEvent.change(screen.getByPlaceholderText(/add a note/i), { target: { value: 'small dataset' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.getByRole('button', { name: /1\/1 answered/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /back to the question/i }));
+    expect(screen.getByRole('radio', { name: /SQLite/ }).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /send answer/i }));
+    expect(onAnswer).toHaveBeenCalledWith('q1', 'allow', {
+      answers: { 'Which database?': 'SQLite' },
+      notes: { 'Which database?': 'small dataset' },
+    });
+  });
+
+  it('keeps the deadline visible while minimized', () => {
+    render(<QuestionModal request={request({ expiresAt: 90_000 })} queued={2} now={0} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.getByText('expires in 1:30')).toBeTruthy();
+    expect(screen.getByText('2 waiting')).toBeTruthy();
   });
 
   it('dismiss denies, so a question can still be blocked outright', () => {
