@@ -78,6 +78,46 @@ describe('chat messages', () => {
     expect(twice.items).toHaveLength(1);
   });
 
+  // The CLI splits one API message into a frame per content block, all under the same id. Replacing
+  // the item on the second frame is how the paragraph explaining a question vanished the instant the
+  // AskUserQuestion call landed.
+  it('merges the later blocks of one message instead of dropping the earlier ones', () => {
+    const state = apply(initialChatState, [
+      ['chat.message', { messageId: 'm1', role: 'assistant', ts: 100, blocks: [{ type: 'text', text: 'Here is why I am asking.' }] }],
+      ['chat.message', { messageId: 'm1', role: 'assistant', ts: 900, blocks: [{ type: 'tool_use', id: 'toolu_1', name: 'AskUserQuestion', input: {} }] }],
+    ]);
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0].blocks).toEqual([
+      { type: 'text', text: 'Here is why I am asking.' },
+      { type: 'tool_use', id: 'toolu_1', name: 'AskUserQuestion', input: {} },
+    ]);
+    expect(state.items[0].ts).toBe(100);
+  });
+
+  it('updates a tool_use in place when its frame is sent again', () => {
+    const state = apply(initialChatState, [
+      ['chat.message', { messageId: 'm1', blocks: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: {} }] }],
+      ['chat.message', { messageId: 'm1', blocks: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }] }],
+    ]);
+    expect(state.items[0].blocks).toEqual([{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }]);
+  });
+
+  it('does not print the same paragraph twice when a frame arrives grown', () => {
+    const state = apply(initialChatState, [
+      ['chat.message', { messageId: 'm1', blocks: [{ type: 'text', text: 'half' }] }],
+      ['chat.message', { messageId: 'm1', blocks: [{ type: 'text', text: 'half of it' }] }],
+    ]);
+    expect(state.items[0].blocks).toEqual([{ type: 'text', text: 'half of it' }]);
+  });
+
+  it('keeps a second, unrelated paragraph of the same message', () => {
+    const state = apply(initialChatState, [
+      ['chat.message', { messageId: 'm1', blocks: [{ type: 'text', text: 'first point' }] }],
+      ['chat.message', { messageId: 'm1', blocks: [{ type: 'text', text: 'second point' }] }],
+    ]);
+    expect(state.items[0].blocks).toHaveLength(2);
+  });
+
   it('keeps a subagent message with the same id as a distinct item', () => {
     const state = apply(initialChatState, [
       ['chat.message', { messageId: 'm1', parentToolUseId: null, blocks: [{ type: 'text', text: 'a' }] }],

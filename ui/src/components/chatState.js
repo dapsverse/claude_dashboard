@@ -115,6 +115,36 @@ export function appendUserMessage(state, text, ts) {
   return appendItem(state, { kind: 'message', role: 'user', blocks: [{ type: 'text', text }], ts, parentToolUseId: null });
 }
 
+// One API message reaches the browser as several `chat.message` frames that all carry the same
+// `message.id`: the CLI splits it by content block, so a turn that explains itself and then asks a
+// question arrives as [thinking], [text], [tool_use]. Replacing the item on a repeated id therefore
+// dropped the explanation the moment the tool call landed — the question showed up alone, with the
+// paragraph that set it up gone from the transcript. Frames are merged instead.
+//
+// A frame is also genuinely redelivered on a reconnect, so a block already on screen must not be
+// printed twice: a tool_use is identified by its id, and text by its own content. A block that
+// matches one already there replaces it in place, because the later frame is the more complete one
+// (a tool_use whose input finished streaming, a text block that grew).
+function sameBlock(a, b) {
+  if (a?.type !== b?.type) return false;
+  if (a.type === 'tool_use') return a.id != null && a.id === b.id;
+  if (a.type !== 'text' && a.type !== 'thinking') return false;
+  if (typeof a.text !== 'string' || typeof b.text !== 'string') return false;
+  // Equal, or one is the other still growing. Two *distinct* paragraphs in one message where one is
+  // a prefix of the other does not happen; the same paragraph re-sent longer does.
+  return a.text === b.text || a.text.startsWith(b.text) || b.text.startsWith(a.text);
+}
+
+function mergeBlocks(prev, next) {
+  const merged = [...prev];
+  for (const block of next) {
+    const at = merged.findIndex((b) => sameBlock(b, block));
+    if (at >= 0) merged[at] = block;
+    else merged.push(block);
+  }
+  return merged;
+}
+
 function applyMessage(state, payload) {
   const { messageId, parentToolUseId = null } = payload;
   const item = {
@@ -133,13 +163,21 @@ function applyMessage(state, payload) {
   const streams = withoutBranch(state.streams, branchOf(payload));
   const completed = remember(state.completed, messageId);
 
-  // A message id that is already on screen is the same message again (a redelivered frame, a
-  // reconnect that replayed it), not a second one.
+  // A message id that is already on screen is the same message again — another block of it, or a
+  // frame replayed after a reconnect — never a second message.
   const existing = messageId == null ? -1
     : state.items.findIndex((i) => i.kind === 'message' && i.messageId === messageId && i.parentToolUseId === parentToolUseId);
   if (existing >= 0) {
     const items = [...state.items];
-    items[existing] = { ...items[existing], ...item };
+    const prev = items[existing];
+    items[existing] = {
+      ...prev,
+      ...item,
+      blocks: mergeBlocks(prev.blocks ?? [], item.blocks),
+      // The first frame's timestamp is where this message sits in the conversation; a later block
+      // of it arriving seconds afterwards must not restamp it.
+      ts: prev.ts ?? item.ts,
+    };
     return { ...state, items, streams, completed };
   }
 
