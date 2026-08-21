@@ -1,14 +1,20 @@
 import { useState } from 'react';
 import { RunRow } from './RunRow.jsx';
-import { runToolUseId } from './runList.js';
+import { finishedIds, runToolUseId, visibleRuns } from './runList.js';
 
 const rank = (r) => (r.status === 'running' ? 0 : 1);
 
-export function LiveRail({ runs, now, taskActivity = {} }) {
+export function LiveRail({ runs, now, taskActivity = {}, projectPath = null }) {
   // One row open at a time, and kept here rather than in App: which row a user has expanded is a
   // property of this panel, and lifting it would re-render the whole shell on every click.
   const [openId, setOpenId] = useState(null);
-  const ordered = [...runs].sort((a, b) => rank(a) - rank(b) || b.startedAt - a.startedAt);
+  // Cleared rows are hidden here and nowhere else: the run is still in the database and still in the
+  // Activity page, because "I have read this" is a property of this panel and not of the run.
+  const [dismissed, setDismissed] = useState(() => new Set());
+
+  const scoped = visibleRuns(runs, { projectPath, dismissed });
+  const ordered = [...scoped].sort((a, b) => rank(a) - rank(b) || b.startedAt - a.startedAt);
+  const finished = finishedIds(ordered);
 
   return (
     // aria-live: the whole point of this panel is that it changes while the user watches it.
@@ -18,9 +24,26 @@ export function LiveRail({ runs, now, taskActivity = {} }) {
     // list item, and the default set is what actually catches those. The per-second elapsed clock
     // that ticks inside every row is marked aria-hidden in RunRow so it never gets announced.
     <aside className="rail" aria-label="Live agents" aria-live="polite">
-      <h2>Live agents</h2>
+      <div className="rail-head">
+        <h2>Live agents</h2>
+        {finished.length > 0 && (
+          <button
+            type="button"
+            className="btn subtle rail-clear"
+            onClick={() => setDismissed((prev) => new Set([...prev, ...finished]))}
+          >
+            Clear finished
+          </button>
+        )}
+      </div>
       {ordered.length === 0
-        ? <p className="empty">No agents running. Dispatch one from any Claude Code session and it appears here.</p>
+        ? (
+          <p className="empty">
+            {projectPath === null
+              ? 'No agents running. Dispatch one from any Claude Code session and it appears here.'
+              : 'No agents running in this project. Dispatch one here, or from a Claude Code session in this directory, and it appears here.'}
+          </p>
+        )
         : (
           <ul>
             {ordered.map((run) => (

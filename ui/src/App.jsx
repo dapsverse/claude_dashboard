@@ -12,6 +12,7 @@ import { useRoute } from './router.jsx';
 import { connectStream, fetchJson } from './api.js';
 import { upsertRun, mergeSnapshot } from './components/runList.js';
 import { useChatSession } from './useChatSession.js';
+import { questionPreamble } from './components/questionContext.js';
 
 export function App() {
   const [runs, setRuns] = useState([]);
@@ -89,11 +90,20 @@ export function App() {
   const page = path === '/agents' ? <Agents agents={catalog.agents} catalogError={catalogError} />
     : path === '/skills' ? <Skills skills={catalog.skills} catalogError={catalogError} />
     : path === '/activity' ? <Activity runs={runs.filter((r) => r.status !== 'running')} hooksInstalled={hooksInstalled} />
-    : <Chat session={session} runs={runs} now={now} />;
+    : <Chat session={session} runs={runs} now={now} catalog={catalog} />;
 
   return (
     <Layout
-      rail={<LiveRail runs={runs} now={now} taskActivity={session.chat.taskActivity} />}
+      rail={(
+        <LiveRail
+          runs={runs}
+          now={now}
+          taskActivity={session.chat.taskActivity}
+          // Scoped to the selected project: a run belongs to one working directory, and the rail was
+          // still showing agents from whatever project was open before this one.
+          projectPath={session.selected}
+        />
+      )}
       sidebar={(
         <ProjectSwitcher
           projects={session.projects}
@@ -127,9 +137,13 @@ export function App() {
             <QuestionModal
               request={session.permissions[0]}
               queued={session.permissions.length}
-              now={now}
               onAnswer={session.decide}
               selectedProject={session.selected}
+              // Only the selected project's transcript is loaded, so a question from another
+              // project gets no preamble rather than the wrong one.
+              context={session.permissions[0].projectPath === session.selected
+                ? questionPreamble(session.chat, session.permissions[0])
+                : null}
             />
           )
           : (

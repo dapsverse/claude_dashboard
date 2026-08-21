@@ -207,6 +207,27 @@ test('an AskUserQuestion request is broadcast as a question, with its questions 
   gate.close();
 });
 
+// A question is the model waiting on the user to think. An approval window on that produces either a
+// rushed answer or an auto-deny reported to the model as "the user refused to reply" — so a question
+// gets no deadline, while a tool call keeps its fail-closed one.
+test('a question is never expired by the approval window, and reports no deadline', async () => {
+  const hub = fakeHub();
+  const gate = createPermissionGate({ hub, timeoutMs: 5 });
+  const decision = gate.forProject('/p')('AskUserQuestion', QUESTION_INPUT, ctx());
+
+  const [req] = hub.of('permission.request');
+  assert.equal(req.expiresAt, null);
+
+  await new Promise((r) => setTimeout(r, 30));                  // well past the window a tool gets
+  assert.deepEqual(hub.of('permission.resolved'), []);
+  assert.equal(gate.list('/p').length, 1);
+
+  gate.resolve(req.id, 'allow', { answers: { 'Which database?': 'Postgres' } });
+  const result = await decision;
+  assert.equal(result.behavior, 'allow');
+  gate.close();
+});
+
 test('answering a question allows the tool with the answers in updatedInput', async () => {
   const hub = fakeHub();
   const gate = createPermissionGate({ hub });

@@ -41,6 +41,56 @@ const pre = {
   tool_input: { subagent_type: 'qa', description: 'write tests', prompt: 'p' },
 };
 
+// End to end over the wire, because this is the bug the dashboard actually showed: a background
+// agent launched, reported as done in 0s, and gone from the live list while it was still working.
+test('a background dispatch stays running until its SubagentStop arrives', async () => {
+  const { server, runs, post, events } = await boot();
+  await post(pre);
+  await post({
+    ...pre,
+    hook_event_name: 'PostToolUse',
+    tool_response: { isAsync: true, status: 'async_launched', agentId: 'ag_7' },
+    duration_ms: 9,
+  });
+  assert.equal(runs.listActive().length, 1, 'the launch must not close the run');
+  assert.equal(runs.get('s1:tu_1').agentId, 'ag_7');
+
+  clock += 90_000;
+  await post({
+    hook_event_name: 'SubagentStop', session_id: 's1', cwd: '/proj',
+    agent_id: 'ag_7', agent_type: 'qa',
+    agent_transcript_path: '/agent.jsonl', last_assistant_message: 'tests written',
+  });
+  const row = runs.get('s1:tu_1');
+  assert.equal(row.status, 'done');
+  assert.equal(row.durationMs, 90_000);
+  assert.equal(row.resultPreview, 'tests written');
+  assert.equal(row.transcriptPath, '/agent.jsonl');
+  assert.match(events.join(''), /event: run\.close/);
+  server.close();
+});
+
+test('a foreground dispatch is still closed by its own PostToolUse', async () => {
+  const { server, runs, post } = await boot();
+  await post(pre);
+  await post({
+    hook_event_name: 'SubagentStop', session_id: 's1', cwd: '/proj',
+    agent_id: 'ag_9', agent_type: 'qa', agent_transcript_path: '/agent.jsonl', last_assistant_message: 'partial',
+  });
+  assert.equal(runs.get('s1:tu_1').status, 'running', 'SubagentStop must not close a foreground run');
+  assert.equal(runs.get('s1:tu_1').transcriptPath, '/agent.jsonl');
+  await post({
+    ...pre, hook_event_name: 'PostToolUse',
+    tool_response: { status: 'completed', agentId: 'ag_9', content: [{ type: 'text', text: 'all done' }] },
+    duration_ms: 2027,
+  });
+  const row = runs.get('s1:tu_1');
+  assert.equal(row.status, 'done');
+  assert.equal(row.durationMs, 2027);
+  assert.equal(row.resultPreview, 'all done');
+  server.close();
+});
+
 test('a PreToolUse[Agent] post creates a running row and broadcasts it', async () => {
   const { server, runs, post, events } = await boot();
   const res = await post(pre);

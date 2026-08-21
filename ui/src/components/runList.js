@@ -49,3 +49,24 @@ export function mergeSnapshot(runs, streamedIds, snapshotRuns) {
   const known = new Set(fromStream.map((r) => r.id));
   return [...fromStream, ...dedupeById(snapshotRuns).filter((r) => !known.has(r.id))];
 }
+
+/**
+ * The rows the rail should draw: this project's, minus anything the user has cleared.
+ *
+ * Scoped by project because a run is a fact about one working directory, and a rail that mixes them
+ * shows agents from a project the user closed hours ago. A run that names no project is kept — its
+ * session was never recorded, so it cannot be attributed, and hiding a running agent on a guess is
+ * worse than showing an unattributed one.
+ */
+export function visibleRuns(runs, { projectPath = null, dismissed = null } = {}) {
+  return runs.filter((run) => {
+    if (dismissed?.has(run.id)) return false;
+    if (projectPath === null) return true;             // nothing selected yet: scope to nothing
+    return run.projectPath == null || run.projectPath === projectPath;
+  });
+}
+
+/** The ids of every row that has stopped — what "clear finished" removes, and nothing else. */
+export function finishedIds(runs) {
+  return runs.filter((run) => run.status !== 'running').map((run) => run.id);
+}

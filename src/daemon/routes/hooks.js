@@ -27,9 +27,17 @@ export function applyActions(actions, { runs, sessions, hub }) {
       case 'run.close':
         if (runs.close(action.close)) hub.broadcast('run.close', runs.get(action.close.id));
         break;
-      case 'run.enrich': {
-        const id = runs.enrich(action.match, action.patch);
-        if (id) hub.broadcast('run.enrich', runs.get(id));
+      // A background dispatch returned but its agent did not: record the id the SubagentStop will
+      // arrive under, and broadcast the row so the rail keeps it running rather than dropping it.
+      case 'run.launch':
+        if (runs.launch({ id: action.id, agentId: action.agentId })) hub.broadcast('run.enrich', runs.get(action.id));
+        break;
+      case 'run.finish': {
+        const outcome = runs.finish(action.match, action.patch);
+        // `run.close` only when the run actually ended here. A foreground run is merely enriched —
+        // its own PostToolUse closes it moments later with the tool's duration and full response,
+        // and announcing a close now would stop the rail's clock on a run that is still open.
+        if (outcome) hub.broadcast(outcome.closed ? 'run.close' : 'run.enrich', runs.get(outcome.id));
         break;
       }
       default:

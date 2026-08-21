@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Markdown } from './Markdown.jsx';
 
 const FOCUSABLE = 'button, [href], textarea, input, select, [tabindex]:not([tabindex="-1"])';
-
-function countdown(ms) {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-}
 
 const OTHER = '__other__';
 
@@ -14,7 +10,9 @@ const OTHER = '__other__';
 // result reads "The user did not answer the questions." unless the allow carries the answers back.
 // So this is not an approval prompt with extra text — it is the answer sheet, and an Allow button
 // with nothing to fill in is indistinguishable from silence to the model waiting on it.
-export function QuestionModal({ request, queued, now, onAnswer, selectedProject }) {
+// No countdown anywhere in here on purpose: the daemon gives a question no deadline, so there is
+// nothing to count down to. A clock on a question only rushes the answer it was supposed to help.
+export function QuestionModal({ request, queued, onAnswer, selectedProject, context = null }) {
   const questions = useMemo(
     () => (Array.isArray(request.questions) ? request.questions : []),
     [request.questions],
@@ -27,8 +25,14 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
   const [notes, setNotes] = useState({});       // question -> optional note
   const [pending, setPending] = useState(null);
   const [failure, setFailure] = useState(null);
+  // Minimized is a view of the same open request, not a decision about it: the tool is still
+  // blocked and the answers already typed are still here. It exists because the lead-up to a
+  // question lives in the transcript this modal covers, and a preamble excerpt is not the same as
+  // being able to scroll back and read the thing.
+  const [minimized, setMinimized] = useState(false);
   const dialogRef = useRef(null);
   const firstRef = useRef(null);
+  const dockRef = useRef(null);
 
   useEffect(() => {
     setPicked({});
@@ -36,8 +40,16 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
     setNotes({});
     setPending(null);
     setFailure(null);
-    firstRef.current?.focus();
+    setMinimized(false);
   }, [request.id]);
+
+  // Focus follows the state, both ways: into the answer sheet when it opens or reopens, onto the
+  // dock's own button when it collapses — a minimize that left focus on a removed node would drop
+  // the keyboard user back to the top of the document.
+  useEffect(() => {
+    if (minimized) dockRef.current?.focus();
+    else firstRef.current?.focus();
+  }, [minimized, request.id]);
 
   // What actually goes on the wire: the label for a single choice, an array for a multi-select (the
   // daemon joins it), or the user's own words when they chose "Something else".
@@ -81,7 +93,7 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
       await onAnswer(request.id, decision, body);
     } catch (err) {
       setFailure(err?.status === 404
-        ? 'This question was already settled — it timed out, or the session was interrupted. Your answer was not delivered.'
+        ? 'This question was already settled — the session was interrupted, reset, or shut down. Your answer was not delivered.'
         : `Could not send the answer (${err?.message ?? 'unknown error'}). The question is still waiting.`);
       setPending(null);
     }
@@ -96,8 +108,11 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
 
   function onKeyDown(e) {
     if (e.key === 'Escape') {
+      // Escape minimizes; it does not answer. It used to skip, which meant the one key a user
+      // presses to get a modal out of the way told Claude nobody replied — and the reason they
+      // wanted it out of the way was to read the transcript before replying.
       e.preventDefault();
-      if (pending === null) skip();
+      setMinimized(true);
       return;
     }
     if (e.key !== 'Tab') return;
@@ -117,9 +132,27 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
     });
   }
 
-  const remaining = request.expiresAt == null ? null : request.expiresAt - now;
-  const expired = remaining !== null && remaining <= 0;
   const foreign = request.projectPath && selectedProject && request.projectPath !== selectedProject;
+
+  // Collapsed: no backdrop, so the transcript underneath scrolls and can be read. Deliberately not
+  // a dismissal — the dock stays on screen for as long as the question is open. Since the question
+  // never expires, this bar is the only thing that says Claude is still waiting.
+  if (minimized) {
+    return (
+      <div className="question-dock" role="status">
+        <span className="badge asking">Claude is asking</span>
+        {queued > 1 && <span className="modal-queue">{queued} waiting</span>}
+        <button
+          type="button"
+          className="btn primary"
+          ref={dockRef}
+          onClick={() => setMinimized(false)}
+        >
+          {answered > 0 ? `Back to the question (${answered}/${questions.length} answered)` : 'Back to the question'}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="modal-backdrop">
@@ -127,11 +160,9 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
         <header className="modal-head">
           <span className="badge asking">Claude is asking</span>
           {queued > 1 && <span className="modal-queue">{queued} waiting</span>}
-          <span className={`modal-clock mono${expired ? ' expired' : ''}`}>
-            {remaining === null ? 'no deadline reported'
-              : expired ? 'deadline passed — blocking'
-              : `expires in ${countdown(remaining)}`}
-          </span>
+          <button type="button" className="btn subtle modal-minimize" onClick={() => setMinimized(true)}>
+            Minimize
+          </button>
         </header>
 
         <h2 id="question-title">
@@ -140,6 +171,26 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
             : `${questions.length} questions before continuing`}
         </h2>
         {foreign && <p className="modal-description mono">{request.projectPath}</p>}
+
+        {/* The run-up to the question, from the transcript this modal is covering. A question is
+            written to be read after the paragraph that sets it up, and the modal opens over any
+            page — so leaving this out is how "which of these two?" arrives with no "these two".
+            Absent rather than empty when the transcript cannot show it: an empty box would read as
+            "Claude said nothing", which is a different claim. */}
+        {context === null
+          ? (
+            <p className="qcontext-missing">
+              {foreign
+                ? 'What Claude said before asking is in that project\u2019s chat — switch to it to read the lead-up.'
+                : 'The lead-up to this question is not in this transcript. Minimize to look for it in the chat, answer from the question itself, or dismiss it and ask Claude to explain.'}
+            </p>
+          )
+          : (
+            <div className="qcontext">
+              <span className="qcontext-label mono">before asking</span>
+              <div className="qcontext-body" tabIndex={0}><Markdown source={context} /></div>
+            </div>
+          )}
 
         {questions.length === 0 && (
           // Only reachable against a daemon that broadcast `kind: 'question'` without the questions
@@ -244,8 +295,9 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
           </button>
         </div>
         <p className="modal-foot">
-          Skip tells Claude the questions went unanswered and lets it carry on. Dismiss blocks the
-          question instead. Escape skips.
+          Minimize keeps the question open and uncovers the chat behind it — nothing is sent and
+          your answers so far are kept. Skip tells Claude the questions went unanswered and lets it
+          carry on. Dismiss blocks the question instead. Escape minimizes.
         </p>
       </div>
     </div>

@@ -55,9 +55,26 @@ export function openDb(path) {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  migrate(db);
   chmodSync(path, 0o600);
   restrictSidecars(path);
   return db;
+}
+
+// Columns added after the first release. `CREATE TABLE IF NOT EXISTS` does nothing to a table that
+// already exists, so a new column has to be added explicitly — and a database that already has it
+// must be left alone, which is why this reads the table rather than swallowing an ALTER error.
+const ADDED_COLUMNS = [
+  // The subagent's own id, reported both when a background dispatch is launched and when any
+  // subagent stops. It is the only exact join between the two.
+  { table: 'runs', column: 'agent_id', type: 'TEXT' },
+];
+
+function migrate(db) {
+  for (const { table, column, type } of ADDED_COLUMNS) {
+    const present = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+    if (!present) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 // WAL leaves `-wal` and `-shm` beside the database, and SQLite creates them under the process umask

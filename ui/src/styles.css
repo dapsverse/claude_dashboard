@@ -853,6 +853,73 @@ pre:focus-visible {
 
 /* ---------------------------------------------------------------- permission modal */
 
+/* A drop target has to look like one while a file is over it, or the user cannot tell the composer
+   accepts the drag at all. */
+.composer form.dragging textarea {
+  border-color: var(--running);
+  background: var(--line);
+}
+
+.composer-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* The mention list sits above the textarea, inside the form's positioning context: the composer is
+   at the bottom of the window, so a list drawn downwards would be off screen. */
+.composer form { position: relative; }
+
+.mentions {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--stale);
+  border-radius: 6px;
+}
+
+.mention {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mention.active { background: var(--line); }
+.mention-name { font-weight: 600; }
+.mention-desc {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip.agent, .chip.skill { min-width: 38px; text-align: center; }
+
+.rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rail-clear { font-size: 11px; padding: 2px 6px; }
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -950,6 +1017,53 @@ pre:focus-visible {
 }
 
 .qlist { display: flex; flex-direction: column; gap: 14px; }
+
+/* The lead-up to the question. Scrolls in its own box rather than pushing the options off screen:
+   the answer sheet is what the user is here for, and a long preamble must not bury it. */
+/* The minimized question: a bar, not a backdrop, so the transcript behind it stays readable and
+   scrollable. Bottom-right rather than centred, and clear of the composer. */
+.question-dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: min(520px, calc(100vw - 40px));
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+/* Takes the slot the clock used to hold: a question has no deadline, so nothing counts down. */
+.modal-minimize { margin-left: auto; padding: 2px 8px; font-size: 11px; }
+
+.qcontext {
+  border-left: 2px solid var(--line);
+  padding: 0 0 0 10px;
+  margin: 0 0 14px;
+}
+
+.qcontext-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.qcontext-body {
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.qcontext-missing { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
 
 .qblock {
   border: 1px solid var(--line);

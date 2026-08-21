@@ -108,6 +108,101 @@ test('enrich returns null when nothing matches, rather than guessing', () => {
   assert.equal(runs.enrich({ sessionId: 's1', agentType: 'qa' }, { transcriptPath: '/t' }), null);
 });
 
+// A background dispatch reports its agent id at launch and keeps running. Recording the id without
+// closing the row is the whole fix for a subagent that rendered as done in 0s.
+test('launch records the agent id and leaves the run running', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  assert.equal(runs.launch({ id: 's1:t1', agentId: 'ag_7' }), true);
+  const row = runs.get('s1:t1');
+  assert.equal(row.status, 'running');
+  assert.equal(row.agentId, 'ag_7');
+});
+
+test('launch refuses a run that is already finished', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  runs.close({ id: 's1:t1', status: 'done', endedAt: 2000 });
+  assert.equal(runs.launch({ id: 's1:t1', agentId: 'ag_7' }), false);
+  assert.equal(runs.get('s1:t1').agentId, null);
+});
+
+test('finish closes the launched run its agent id names, with a real duration', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  runs.launch({ id: 's1:t1', agentId: 'ag_7' });
+  const outcome = runs.finish(
+    { agentId: 'ag_7', sessionId: 's1', agentType: 'programmer' },
+    { endedAt: 61_000, transcriptPath: '/a.jsonl', resultPreview: 'done here' },
+  );
+  assert.deepEqual(outcome, { id: 's1:t1', closed: true });
+  const row = runs.get('s1:t1');
+  assert.equal(row.status, 'done');
+  assert.equal(row.durationMs, 60_000);
+  assert.equal(row.transcriptPath, '/a.jsonl');
+  assert.equal(row.resultPreview, 'done here');
+});
+
+// The foreground path still closes through PostToolUse, which reports the tool's own duration and
+// its full response. SubagentStop arrives first and must only fill in the transcript.
+test('finish only enriches when no launched run matches the agent id', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  const outcome = runs.finish(
+    { agentId: 'ag_unknown', sessionId: 's1', agentType: 'programmer' },
+    { endedAt: 61_000, transcriptPath: '/a.jsonl', resultPreview: 'partial' },
+  );
+  assert.deepEqual(outcome, { id: 's1:t1', closed: false });
+  assert.equal(runs.get('s1:t1').status, 'running');
+  assert.equal(runs.get('s1:t1').transcriptPath, '/a.jsonl');
+});
+
+// Otherwise one foreground agent's transcript would land on a background run of the same type that
+// is still working, and the exact id it was launched with would be contradicted by a guess.
+test('the heuristic never touches a run that was launched with an agent id', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  runs.launch({ id: 's1:t1', agentId: 'ag_7' });
+  const outcome = runs.finish(
+    { agentId: 'ag_other', sessionId: 's1', agentType: 'programmer' },
+    { endedAt: 61_000, transcriptPath: '/other.jsonl', resultPreview: 'not mine' },
+  );
+  assert.equal(outcome, null);
+  assert.equal(runs.get('s1:t1').transcriptPath, null);
+});
+
+test('finish reports nothing when neither the id nor the type matches', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  assert.equal(runs.finish({ agentId: null, sessionId: 's1', agentType: 'qa' }, { endedAt: 2000 }), null);
+});
+
+test('close records the agent id a foreground response reports', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  runs.close({ id: 's1:t1', status: 'done', endedAt: 3000, agentId: 'ag_7' });
+  assert.equal(runs.get('s1:t1').agentId, 'ag_7');
+});
+
+// The rail scopes itself to the selected project, and the run row is the only thing it has to scope
+// by. The cwd lives on the session, so every read joins it rather than copying it onto the run.
+test('a run reports the project path of the session that dispatched it', () => {
+  const db = fresh();
+  const runs = createRunsRepo(db);
+  const sessions = createSessionsRepo(db);
+  sessions.touch({ id: 's1', projectPath: '/proj', source: 'terminal', at: 1000 });
+  runs.open(baseRun);
+  assert.equal(runs.get('s1:t1').projectPath, '/proj');
+  assert.equal(runs.listActive()[0].projectPath, '/proj');
+  assert.equal(runs.listRecent()[0].projectPath, '/proj');
+});
+
+test('a run whose session was never recorded reports no project rather than failing', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  assert.equal(runs.get('s1:t1').projectPath, null);
+});
+
 test('pruneBefore deletes finished rows older than the cutoff and keeps running ones', () => {
   const runs = createRunsRepo(fresh());
   runs.open({ ...baseRun, id: 'old' });

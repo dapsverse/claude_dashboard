@@ -22,12 +22,32 @@ const request = (over = {}) => ({
   ...over,
 });
 
-const draw = (over = {}, onAnswer = vi.fn()) => {
-  render(<QuestionModal request={request(over)} queued={1} now={0} onAnswer={onAnswer} selectedProject="/p" />);
+const draw = (over = {}, onAnswer = vi.fn(), context = null) => {
+  render(<QuestionModal request={request(over)} queued={1} onAnswer={onAnswer} selectedProject="/p" context={context} />);
   return onAnswer;
 };
 
 describe('QuestionModal', () => {
+  // The second half of the same bug: the modal covers the transcript it opened over, so a question
+  // with no lead-up is a question the user cannot read.
+  it('shows what Claude said before asking', () => {
+    draw({}, vi.fn(), 'Two ways to store this, and they differ on **durability**.');
+    expect(screen.getByText('before asking')).toBeTruthy();
+    expect(screen.getByText(/Two ways to store this/)).toBeTruthy();
+    expect(screen.getByText('durability')).toBeTruthy();
+  });
+
+  it('says the lead-up is missing rather than showing an empty box', () => {
+    draw();
+    expect(screen.queryByText('before asking')).toBe(null);
+    expect(screen.getByText(/lead-up to this question is not in this transcript/)).toBeTruthy();
+  });
+
+  it('points at the other project when the question belongs to one', () => {
+    render(<QuestionModal request={request({ projectPath: '/other' })} queued={1} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+    expect(screen.getByText(/switch to it to read the lead-up/)).toBeTruthy();
+  });
+
   it('renders the question, its options, descriptions and previews', () => {
     draw();
     expect(screen.getByText('Which database?')).toBeTruthy();
@@ -109,10 +129,57 @@ describe('QuestionModal', () => {
     expect(onAnswer).toHaveBeenCalledWith('q1', 'allow', { answers: {}, notes: {} });
   });
 
-  it('escape skips rather than blocking the question', () => {
+  // Escape used to skip, which is how the one key that clears a modal out of the way came to tell
+  // Claude that nobody replied.
+  it('escape minimizes and answers nothing', () => {
     const onAnswer = draw();
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    expect(onAnswer).toHaveBeenCalledWith('q1', 'allow', { answers: {}, notes: {} });
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBe(null);
+    expect(screen.getByRole('button', { name: /back to the question/i })).toBeTruthy();
+  });
+
+  it('minimizes to a dock that uncovers the transcript, and reopens', () => {
+    const onAnswer = draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(document.querySelector('.modal-backdrop')).toBe(null);
+    fireEvent.click(screen.getByRole('button', { name: /back to the question/i }));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('Which database?')).toBeTruthy();
+  });
+
+  // The whole point of minimizing is to go and read the lead-up, then come back and answer. Losing
+  // the choice on the way would make it a worse Skip.
+  it('keeps the answers already picked across a minimize', () => {
+    const onAnswer = draw();
+    fireEvent.click(screen.getByRole('radio', { name: /SQLite/ }));
+    fireEvent.change(screen.getByPlaceholderText(/add a note/i), { target: { value: 'small dataset' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.getByRole('button', { name: /1\/1 answered/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /back to the question/i }));
+    expect(screen.getByRole('radio', { name: /SQLite/ }).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /send answer/i }));
+    expect(onAnswer).toHaveBeenCalledWith('q1', 'allow', {
+      answers: { 'Which database?': 'SQLite' },
+      notes: { 'Which database?': 'small dataset' },
+    });
+  });
+
+  it('says how many other questions are waiting while minimized', () => {
+    render(<QuestionModal request={request()} queued={2} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.getByText('2 waiting')).toBeTruthy();
+  });
+
+  // A question is the model waiting on the user to think. A clock on that either rushes the answer
+  // or expires it, and the daemon no longer sets one — so nothing here may draw one either.
+  it('never shows a countdown, even when a deadline is on the request', () => {
+    render(<QuestionModal request={request({ expiresAt: 90_000 })} queued={1} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+    expect(screen.queryByText(/expires in/)).toBe(null);
+    expect(screen.queryByText(/deadline/)).toBe(null);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.queryByText(/expires in/)).toBe(null);
   });
 
   it('dismiss denies, so a question can still be blocked outright', () => {

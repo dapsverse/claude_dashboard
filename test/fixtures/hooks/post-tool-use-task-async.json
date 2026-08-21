@@ -1,0 +1,24 @@
+{
+    "session_id": "e4c28e67-99d2-431f-bb70-e6172b8c31f2",
+    "transcript_path": "/home/testuser/.claude/projects/-tmp-proj/e4c28e67-99d2-431f-bb70-e6172b8c31f2.jsonl",
+    "cwd": "/tmp/proj",
+    "prompt_id": "5fa9871e-7853-464e-bdcd-28c8804face5",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+        "description": "Verify Meta AI assistant policy",
+        "prompt": "test prompt",
+        "subagent_type": "researcher",
+        "run_in_background": true
+    },
+    "tool_response": {
+        "isAsync": true,
+        "status": "async_launched",
+        "agentId": "a901f1f5a347036f4",
+        "description": "Verify Meta AI assistant policy",
+        "agentType": "researcher"
+    },
+    "tool_use_id": "toolu_01WTQs8ynPa4PA2s2S8PmajR",
+    "duration_ms": 9
+}

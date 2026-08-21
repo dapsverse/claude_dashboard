@@ -36,7 +36,7 @@ test('PostToolUse[Task] closes the same id', () => {
   const evt = { ...pre, hook_event_name: 'PostToolUse', tool_response: 'all good', duration_ms: 4321 };
   const close = planActions(evt, { now: NOW }).find((a) => a.type === 'run.close');
   assert.deepEqual(close.close, {
-    id: 's1:tu_1', status: 'done', endedAt: NOW, durationMs: 4321, resultPreview: 'all good',
+    id: 's1:tu_1', status: 'done', endedAt: NOW, durationMs: 4321, resultPreview: 'all good', agentId: null,
   });
 });
 
@@ -63,7 +63,51 @@ test('result previews are redacted and capped', () => {
   assert.ok(!close.close.resultPreview.includes('ghp_'));
 });
 
-test('SubagentStop produces a heuristic enrich, never an open or close', () => {
+// A background dispatch returns the moment the agent is launched: the tool response says so, and
+// the hook fires ~10ms after PreToolUse. Closing on it is what rendered a subagent that was still
+// working as "done" in 0s, and dropped it out of listActive().
+test('PostToolUse for an async dispatch launches the run instead of closing it', () => {
+  const evt = {
+    ...pre,
+    hook_event_name: 'PostToolUse',
+    tool_response: { isAsync: true, status: 'async_launched', agentId: 'ag_7', description: 'add auth' },
+    duration_ms: 9,
+  };
+  const actions = planActions(evt, { now: NOW });
+  assert.equal(actions.some((a) => a.type === 'run.close'), false);
+  const launch = actions.find((a) => a.type === 'run.launch');
+  assert.deepEqual(launch, { type: 'run.launch', id: 's1:tu_1', agentId: 'ag_7' });
+});
+
+test('an async launch without an agentId still refuses to close the run', () => {
+  const evt = { ...pre, hook_event_name: 'PostToolUse', tool_response: { status: 'async_launched' }, duration_ms: 9 };
+  const actions = planActions(evt, { now: NOW });
+  assert.equal(actions.some((a) => a.type === 'run.close'), false);
+  assert.equal(actions.find((a) => a.type === 'run.launch').agentId, null);
+});
+
+test('a foreground dispatch still closes on PostToolUse, carrying the agent id it reports', () => {
+  const evt = {
+    ...pre,
+    hook_event_name: 'PostToolUse',
+    tool_response: { status: 'completed', agentId: 'ag_7', content: [{ type: 'text', text: 'hello' }] },
+    duration_ms: 2027,
+  };
+  const close = planActions(evt, { now: NOW }).find((a) => a.type === 'run.close');
+  assert.equal(close.close.status, 'done');
+  assert.equal(close.close.agentId, 'ag_7');
+  assert.equal(close.close.resultPreview, 'hello');
+});
+
+test('the real async fixture launches rather than closes', () => {
+  const actions = planActions(fixture('post-tool-use-task-async'), { now: NOW });
+  assert.equal(actions.some((a) => a.type === 'run.close'), false);
+  const launch = actions.find((a) => a.type === 'run.launch');
+  assert.equal(launch.agentId, 'a901f1f5a347036f4');
+  assert.equal(launch.id, runId('e4c28e67-99d2-431f-bb70-e6172b8c31f2', 'toolu_01WTQs8ynPa4PA2s2S8PmajR'));
+});
+
+test('SubagentStop finishes the run it names, by agent id and by heuristic', () => {
   const evt = {
     hook_event_name: 'SubagentStop', session_id: 's1', cwd: '/proj',
     agent_id: 'ag_9', agent_type: 'programmer', agent_transcript_path: '/agent.jsonl',
@@ -71,14 +115,29 @@ test('SubagentStop produces a heuristic enrich, never an open or close', () => {
   };
   const actions = planActions(evt, { now: NOW });
   assert.equal(actions.some((a) => a.type === 'run.open' || a.type === 'run.close'), false);
-  const enrich = actions.find((a) => a.type === 'run.enrich');
-  assert.deepEqual(enrich.match, { sessionId: 's1', agentType: 'programmer' });
-  assert.equal(enrich.patch.transcriptPath, '/agent.jsonl');
+  const finish = actions.find((a) => a.type === 'run.finish');
+  // The agent id is the exact key an async launch recorded; agent_type is the fallback for a build
+  // that reports no id, and for the foreground runs PostToolUse has already closed.
+  assert.deepEqual(finish.match, { agentId: 'ag_9', sessionId: 's1', agentType: 'programmer' });
+  assert.equal(finish.patch.transcriptPath, '/agent.jsonl');
+  assert.equal(finish.patch.endedAt, NOW);
 });
 
-test('SubagentStop without an agent_type enriches nothing', () => {
+test('SubagentStop with an agent id but no agent_type is still enough to finish a run', () => {
   const evt = { hook_event_name: 'SubagentStop', session_id: 's1', cwd: '/p', agent_id: 'ag_9', agent_transcript_path: '/a' };
-  assert.equal(planActions(evt, { now: NOW }).some((a) => a.type === 'run.enrich'), false);
+  const finish = planActions(evt, { now: NOW }).find((a) => a.type === 'run.finish');
+  assert.deepEqual(finish.match, { agentId: 'ag_9', sessionId: 's1', agentType: null });
+});
+
+test('SubagentStop naming neither an agent id nor a type matches nothing', () => {
+  const evt = { hook_event_name: 'SubagentStop', session_id: 's1', cwd: '/p' };
+  assert.equal(planActions(evt, { now: NOW }).some((a) => a.type === 'run.finish'), false);
+});
+
+test('the real SubagentStop fixture carries its agent id', () => {
+  const finish = planActions(fixture('subagent-stop'), { now: NOW }).find((a) => a.type === 'run.finish');
+  assert.equal(finish.match.agentId, 'ab64803ae3b64584a');
+  assert.equal(finish.patch.resultPreview, 'hello');
 });
 
 test('SessionEnd ends the session', () => {

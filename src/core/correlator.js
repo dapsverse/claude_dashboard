@@ -30,6 +30,21 @@ export function isErrorResponse(toolResponse) {
   return /^Error\b/.test(extractText(toolResponse));
 }
 
+// A dispatch that ran in the background returns the instant the agent is launched: the response
+// says `async_launched` and carries only the agent's id, and the PostToolUse hook fires ~10ms after
+// PreToolUse. Treating that as completion is what closed a still-working subagent as "done" in 0s
+// and dropped it out of `listActive()`. The agent's real end arrives later, as SubagentStop.
+export function isAsyncLaunch(toolResponse) {
+  if (toolResponse === null || typeof toolResponse !== 'object') return false;
+  return toolResponse.isAsync === true || toolResponse.status === 'async_launched';
+}
+
+// Both response shapes report it, and SubagentStop reports the same value as `agent_id`: this is the
+// only exact join between a launch and the stop that ends it.
+const agentIdOf = (toolResponse) => (typeof toolResponse?.agentId === 'string' && toolResponse.agentId !== ''
+  ? toolResponse.agentId
+  : null);
+
 export function planActions(event, { now }) {
   if (!event || typeof event.session_id !== 'string') return [];
 
@@ -59,6 +74,16 @@ export function planActions(event, { now }) {
 
     case 'PostToolUse':
       if (isAgentDispatch(event.tool_name) && event.tool_use_id) {
+        // A background launch only records who to expect a SubagentStop from. The run stays running,
+        // because it is.
+        if (isAsyncLaunch(event.tool_response)) {
+          actions.push({
+            type: 'run.launch',
+            id: runId(event.session_id, event.tool_use_id),
+            agentId: agentIdOf(event.tool_response),
+          });
+          break;
+        }
         actions.push({
           type: 'run.close',
           close: {
@@ -67,20 +92,28 @@ export function planActions(event, { now }) {
             endedAt: now,
             durationMs: event.duration_ms ?? null,
             resultPreview: preview(extractText(event.tool_response)),
+            agentId: agentIdOf(event.tool_response),
           },
         });
       }
       break;
 
-    // Heuristic only: SubagentStop shares no join key with the Task/Agent events, so it
-    // matches the oldest open run with the same (session_id, agent_type) and is skipped
-    // when that is not determinable.
+    // The end of one subagent. `agent_id` is an exact match against the id a background launch
+    // recorded, so a run started in the background is closed here with a real duration. `agent_type`
+    // stays as the fallback for a build that reports no id, and for a foreground run — already
+    // closed by its own PostToolUse — where this only fills in the transcript path. Skipped
+    // entirely when neither is present, because a guess would close some other agent's run.
     case 'SubagentStop':
-      if (event.agent_type) {
+      if (event.agent_id || event.agent_type) {
         actions.push({
-          type: 'run.enrich',
-          match: { sessionId: event.session_id, agentType: event.agent_type },
+          type: 'run.finish',
+          match: {
+            agentId: event.agent_id ?? null,
+            sessionId: event.session_id,
+            agentType: event.agent_type ?? null,
+          },
           patch: {
+            endedAt: now,
             transcriptPath: event.agent_transcript_path ?? null,
             resultPreview: event.last_assistant_message ? preview(event.last_assistant_message) : null,
           },
