@@ -951,6 +951,31 @@ pre:focus-visible {
 
 .qlist { display: flex; flex-direction: column; gap: 14px; }
 
+/* The lead-up to the question. Scrolls in its own box rather than pushing the options off screen:
+   the answer sheet is what the user is here for, and a long preamble must not bury it. */
+.qcontext {
+  border-left: 2px solid var(--line);
+  padding: 0 0 0 10px;
+  margin: 0 0 14px;
+}
+
+.qcontext-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.qcontext-body {
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.qcontext-missing { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+
 .qblock {
   border: 1px solid var(--line);
   border-radius: 4px;

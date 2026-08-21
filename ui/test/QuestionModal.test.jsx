@@ -22,12 +22,32 @@ const request = (over = {}) => ({
   ...over,
 });
 
-const draw = (over = {}, onAnswer = vi.fn()) => {
-  render(<QuestionModal request={request(over)} queued={1} now={0} onAnswer={onAnswer} selectedProject="/p" />);
+const draw = (over = {}, onAnswer = vi.fn(), context = null) => {
+  render(<QuestionModal request={request(over)} queued={1} now={0} onAnswer={onAnswer} selectedProject="/p" context={context} />);
   return onAnswer;
 };
 
 describe('QuestionModal', () => {
+  // The second half of the same bug: the modal covers the transcript it opened over, so a question
+  // with no lead-up is a question the user cannot read.
+  it('shows what Claude said before asking', () => {
+    draw({}, vi.fn(), 'Two ways to store this, and they differ on **durability**.');
+    expect(screen.getByText('before asking')).toBeTruthy();
+    expect(screen.getByText(/Two ways to store this/)).toBeTruthy();
+    expect(screen.getByText('durability')).toBeTruthy();
+  });
+
+  it('says the lead-up is missing rather than showing an empty box', () => {
+    draw();
+    expect(screen.queryByText('before asking')).toBe(null);
+    expect(screen.getByText(/lead-up to this question is not in this transcript/)).toBeTruthy();
+  });
+
+  it('points at the other project when the question belongs to one', () => {
+    render(<QuestionModal request={request({ projectPath: '/other' })} queued={1} now={0} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+    expect(screen.getByText(/switch to it to read the lead-up/)).toBeTruthy();
+  });
+
   it('renders the question, its options, descriptions and previews', () => {
     draw();
     expect(screen.getByText('Which database?')).toBeTruthy();

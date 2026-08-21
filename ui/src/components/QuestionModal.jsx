@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Markdown } from './Markdown.jsx';
 
 const FOCUSABLE = 'button, [href], textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
@@ -14,7 +15,7 @@ const OTHER = '__other__';
 // result reads "The user did not answer the questions." unless the allow carries the answers back.
 // So this is not an approval prompt with extra text — it is the answer sheet, and an Allow button
 // with nothing to fill in is indistinguishable from silence to the model waiting on it.
-export function QuestionModal({ request, queued, now, onAnswer, selectedProject }) {
+export function QuestionModal({ request, queued, now, onAnswer, selectedProject, context = null }) {
   const questions = useMemo(
     () => (Array.isArray(request.questions) ? request.questions : []),
     [request.questions],
@@ -140,6 +141,26 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject 
             : `${questions.length} questions before continuing`}
         </h2>
         {foreign && <p className="modal-description mono">{request.projectPath}</p>}
+
+        {/* The run-up to the question, from the transcript this modal is covering. A question is
+            written to be read after the paragraph that sets it up, and the modal opens over any
+            page — so leaving this out is how "which of these two?" arrives with no "these two".
+            Absent rather than empty when the transcript cannot show it: an empty box would read as
+            "Claude said nothing", which is a different claim. */}
+        {context === null
+          ? (
+            <p className="qcontext-missing">
+              {foreign
+                ? 'What Claude said before asking is in that project\u2019s chat — switch to it to read the lead-up.'
+                : 'The lead-up to this question is not in this transcript. Answer from the question itself, or dismiss it and ask Claude to explain.'}
+            </p>
+          )
+          : (
+            <div className="qcontext">
+              <span className="qcontext-label mono">before asking</span>
+              <div className="qcontext-body" tabIndex={0}><Markdown source={context} /></div>
+            </div>
+          )}
 
         {questions.length === 0 && (
           // Only reachable against a daemon that broadcast `kind: 'question'` without the questions

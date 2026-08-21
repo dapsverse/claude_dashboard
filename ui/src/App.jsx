@@ -12,6 +12,7 @@ import { useRoute } from './router.jsx';
 import { connectStream, fetchJson } from './api.js';
 import { upsertRun, mergeSnapshot } from './components/runList.js';
 import { useChatSession } from './useChatSession.js';
+import { questionPreamble } from './components/questionContext.js';
 
 export function App() {
   const [runs, setRuns] = useState([]);
@@ -130,6 +131,11 @@ export function App() {
               now={now}
               onAnswer={session.decide}
               selectedProject={session.selected}
+              // Only the selected project's transcript is loaded, so a question from another
+              // project gets no preamble rather than the wrong one.
+              context={session.permissions[0].projectPath === session.selected
+                ? questionPreamble(session.chat, session.permissions[0])
+                : null}
             />
           )
           : (
