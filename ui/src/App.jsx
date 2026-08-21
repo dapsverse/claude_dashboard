@@ -137,7 +137,6 @@ export function App() {
             <QuestionModal
               request={session.permissions[0]}
               queued={session.permissions.length}
-              now={now}
               onAnswer={session.decide}
               selectedProject={session.selected}
               // Only the selected project's transcript is loaded, so a question from another

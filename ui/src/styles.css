@@ -1039,9 +1039,8 @@ pre:focus-visible {
   box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
 }
 
-.question-dock .modal-clock { margin-left: 0; }
-
-.modal-minimize { padding: 2px 8px; font-size: 11px; }
+/* Takes the slot the clock used to hold: a question has no deadline, so nothing counts down. */
+.modal-minimize { margin-left: auto; padding: 2px 8px; font-size: 11px; }
 
 .qcontext {
   border-left: 2px solid var(--line);

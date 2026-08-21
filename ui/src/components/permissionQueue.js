@@ -7,9 +7,9 @@
 // hiding one because the user is looking at another project would strand it until it auto-denies,
 // with nothing on screen to explain why. The modal names the project instead.
 
-// Mirrors the daemon's DEFAULT_TIMEOUT_MS. Only ever used for a prompt restored from
+// Mirrors the daemon's DEFAULT_TIMEOUT_MS. Only ever used for a *tool* prompt restored from
 // `/api/chat/history`, whose descriptor carries `ts` but no `expiresAt`; a live `permission.request`
-// states its own deadline and that always wins.
+// states its own deadline and that always wins. Questions are never given one — they do not expire.
 export const APPROVAL_WINDOW_MS = 5 * 60 * 1000;
 
 export function addRequest(queue, payload) {
@@ -33,7 +33,10 @@ export function addRequest(queue, payload) {
     title: payload.title ?? null,
     description: payload.description ?? null,
     ts: payload.ts ?? null,
-    expiresAt: payload.expiresAt ?? (payload.ts == null ? null : payload.ts + APPROVAL_WINDOW_MS),
+    // Questions have no deadline at all, so nothing is synthesized for one: showing a made-up
+    // clock on a restored question would put a countdown on something the daemon will never expire.
+    expiresAt: payload.expiresAt
+      ?? (payload.kind === 'question' || payload.ts == null ? null : payload.ts + APPROVAL_WINDOW_MS),
     // A restored prompt is missing the one thing that makes approval meaningful. The flag travels
     // with it so the modal can say so rather than presenting an empty input as an innocent one.
     restored: payload.restored === true,

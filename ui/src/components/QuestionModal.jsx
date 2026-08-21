@@ -3,11 +3,6 @@ import { Markdown } from './Markdown.jsx';
 
 const FOCUSABLE = 'button, [href], textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
-function countdown(ms) {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-}
-
 const OTHER = '__other__';
 
 // AskUserQuestion reaches the dashboard through the same gate as every other tool, because the CLI
@@ -15,7 +10,9 @@ const OTHER = '__other__';
 // result reads "The user did not answer the questions." unless the allow carries the answers back.
 // So this is not an approval prompt with extra text — it is the answer sheet, and an Allow button
 // with nothing to fill in is indistinguishable from silence to the model waiting on it.
-export function QuestionModal({ request, queued, now, onAnswer, selectedProject, context = null }) {
+// No countdown anywhere in here on purpose: the daemon gives a question no deadline, so there is
+// nothing to count down to. A clock on a question only rushes the answer it was supposed to help.
+export function QuestionModal({ request, queued, onAnswer, selectedProject, context = null }) {
   const questions = useMemo(
     () => (Array.isArray(request.questions) ? request.questions : []),
     [request.questions],
@@ -29,9 +26,9 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject,
   const [pending, setPending] = useState(null);
   const [failure, setFailure] = useState(null);
   // Minimized is a view of the same open request, not a decision about it: the tool is still
-  // blocked, the answers already typed are still here, and the deadline is still running. It exists
-  // because the lead-up to a question lives in the transcript this modal covers, and a preamble
-  // excerpt is not the same as being able to scroll back and read the thing.
+  // blocked and the answers already typed are still here. It exists because the lead-up to a
+  // question lives in the transcript this modal covers, and a preamble excerpt is not the same as
+  // being able to scroll back and read the thing.
   const [minimized, setMinimized] = useState(false);
   const dialogRef = useRef(null);
   const firstRef = useRef(null);
@@ -96,7 +93,7 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject,
       await onAnswer(request.id, decision, body);
     } catch (err) {
       setFailure(err?.status === 404
-        ? 'This question was already settled — it timed out, or the session was interrupted. Your answer was not delivered.'
+        ? 'This question was already settled — the session was interrupted, reset, or shut down. Your answer was not delivered.'
         : `Could not send the answer (${err?.message ?? 'unknown error'}). The question is still waiting.`);
       setPending(null);
     }
@@ -135,23 +132,16 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject,
     });
   }
 
-  const remaining = request.expiresAt == null ? null : request.expiresAt - now;
-  const expired = remaining !== null && remaining <= 0;
   const foreign = request.projectPath && selectedProject && request.projectPath !== selectedProject;
 
-  const clock = remaining === null ? 'no deadline reported'
-    : expired ? 'deadline passed — blocking'
-    : `expires in ${countdown(remaining)}`;
-
   // Collapsed: no backdrop, so the transcript underneath scrolls and can be read. Deliberately not
-  // a dismissal — the dock stays on screen for as long as the question is open, because a blocked
-  // tool call the user has forgotten about is what a timeout looks like from Claude's side.
+  // a dismissal — the dock stays on screen for as long as the question is open. Since the question
+  // never expires, this bar is the only thing that says Claude is still waiting.
   if (minimized) {
     return (
       <div className="question-dock" role="status">
         <span className="badge asking">Claude is asking</span>
         {queued > 1 && <span className="modal-queue">{queued} waiting</span>}
-        <span className={`modal-clock mono${expired ? ' expired' : ''}`}>{clock}</span>
         <button
           type="button"
           className="btn primary"
@@ -170,7 +160,6 @@ export function QuestionModal({ request, queued, now, onAnswer, selectedProject,
         <header className="modal-head">
           <span className="badge asking">Claude is asking</span>
           {queued > 1 && <span className="modal-queue">{queued} waiting</span>}
-          <span className={`modal-clock mono${expired ? ' expired' : ''}`}>{clock}</span>
           <button type="button" className="btn subtle modal-minimize" onClick={() => setMinimized(true)}>
             Minimize
           </button>

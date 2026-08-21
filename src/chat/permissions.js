@@ -148,10 +148,17 @@ export function createPermissionGate({
     // to the ordinary approval prompt, which is honest about what it can and cannot show.
     const questions = toolName === QUESTION_TOOL ? normalizeQuestions(input) : null;
     const kind = questions === null ? 'tool' : 'question';
+    // A question has no deadline. An approval window makes sense for a tool call — an unanswered
+    // one denies, which is the safe end of the fail-closed rule — but a question is the model
+    // waiting on the user to think, and a clock on that only produces two bad outcomes: an answer
+    // rushed to beat it, or an auto-deny that tells the model the user refused to reply. The CLI's
+    // own renderer waits indefinitely too. Interrupt, reset and shutdown still settle it, so the
+    // tool call cannot outlive the session it belongs to.
+    const deadline = kind === 'question' ? null : ts + timeoutMs;
     return new Promise((resolve) => {
       const onAbort = () => settle(id, 'aborted', deny(DENY_ABORTED));
-      const timer = setTimeout(() => settle(id, 'timeout', deny(DENY_TIMEOUT)), timeoutMs);
-      timer.unref?.();                          // an open prompt must not hold the process open
+      const timer = deadline === null ? null : setTimeout(() => settle(id, 'timeout', deny(DENY_TIMEOUT)), timeoutMs);
+      timer?.unref?.();                         // an open prompt must not hold the process open
       signal?.addEventListener('abort', onAbort, { once: true });
 
       pending.set(id, {
@@ -178,7 +185,7 @@ export function createPermissionGate({
         reason: decisionReason ?? null,
         title: title ?? null,
         description: description ?? null,
-        expiresAt: ts + timeoutMs,
+        expiresAt: deadline,
         ts,
       });
     });

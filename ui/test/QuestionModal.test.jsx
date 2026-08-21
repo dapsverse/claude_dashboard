@@ -23,7 +23,7 @@ const request = (over = {}) => ({
 });
 
 const draw = (over = {}, onAnswer = vi.fn(), context = null) => {
-  render(<QuestionModal request={request(over)} queued={1} now={0} onAnswer={onAnswer} selectedProject="/p" context={context} />);
+  render(<QuestionModal request={request(over)} queued={1} onAnswer={onAnswer} selectedProject="/p" context={context} />);
   return onAnswer;
 };
 
@@ -44,7 +44,7 @@ describe('QuestionModal', () => {
   });
 
   it('points at the other project when the question belongs to one', () => {
-    render(<QuestionModal request={request({ projectPath: '/other' })} queued={1} now={0} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+    render(<QuestionModal request={request({ projectPath: '/other' })} queued={1} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
     expect(screen.getByText(/switch to it to read the lead-up/)).toBeTruthy();
   });
 
@@ -166,11 +166,20 @@ describe('QuestionModal', () => {
     });
   });
 
-  it('keeps the deadline visible while minimized', () => {
-    render(<QuestionModal request={request({ expiresAt: 90_000 })} queued={2} now={0} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+  it('says how many other questions are waiting while minimized', () => {
+    render(<QuestionModal request={request()} queued={2} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
     fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
-    expect(screen.getByText('expires in 1:30')).toBeTruthy();
     expect(screen.getByText('2 waiting')).toBeTruthy();
+  });
+
+  // A question is the model waiting on the user to think. A clock on that either rushes the answer
+  // or expires it, and the daemon no longer sets one — so nothing here may draw one either.
+  it('never shows a countdown, even when a deadline is on the request', () => {
+    render(<QuestionModal request={request({ expiresAt: 90_000 })} queued={1} onAnswer={vi.fn()} selectedProject="/p" context={null} />);
+    expect(screen.queryByText(/expires in/)).toBe(null);
+    expect(screen.queryByText(/deadline/)).toBe(null);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.queryByText(/expires in/)).toBe(null);
   });
 
   it('dismiss denies, so a question can still be blocked outright', () => {

@@ -403,6 +403,16 @@ describe('permission queue', () => {
     expect(removeRequest(queue, 'nope')).toBe(queue);
   });
 
+  // The synthesized window exists for a restored *tool* prompt, whose descriptor carries no
+  // deadline. A question has none to restore: drawing one would put a countdown on something the
+  // daemon will never expire.
+  it('gives a question no deadline, synthesized or otherwise', () => {
+    const [live] = addRequest([], { id: 'q1', kind: 'question', ts: 1000, questions: [{ question: 'x?' }] });
+    expect(live.expiresAt).toBe(null);
+    const [restored] = restoreRequests([], [{ id: 'q2', kind: 'question', ts: 1000, questions: [{ question: 'y?' }] }]);
+    expect(restored.expiresAt).toBe(null);
+  });
+
   it('tolerates a missing descriptor list', () => {
     expect(restoreRequests([], undefined)).toEqual([]);
     expect(restoreRequests([], null)).toEqual([]);
