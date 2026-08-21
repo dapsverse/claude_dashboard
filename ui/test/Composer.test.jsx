@@ -35,6 +35,52 @@ const type = (input, value) => {
   fireEvent.select(input);
 };
 
+const drop = (input, { uriList = '', plain = '', files = [] }) => {
+  fireEvent.drop(input, {
+    dataTransfer: {
+      files,
+      types: [...(files.length ? ['Files'] : []), ...(uriList ? ['text/uri-list'] : []), ...(plain ? ['text/plain'] : [])],
+      getData: (type) => (type === 'text/uri-list' ? uriList : type === 'text/plain' ? plain : ''),
+    },
+  });
+};
+
+describe('Composer file drops', () => {
+  it('writes a dropped path into the draft', () => {
+    const { input } = draw();
+    drop(input, { uriList: 'file:///Users/daps/schema.sql' });
+    expect(input.value).toBe('`/Users/daps/schema.sql` ');
+  });
+
+  it('keeps what was already typed', () => {
+    const { input } = draw();
+    type(input, 'review');
+    drop(input, { plain: '/a/b.sql' });
+    expect(input.value).toBe('review `/a/b.sql` ');
+  });
+
+  // The honest failure mode: Finder gives the browser bytes and a name, never a location.
+  it('falls back to the file name and says why', () => {
+    const { input } = draw();
+    drop(input, { files: [{ name: 'screenshot.png' }] });
+    expect(input.value).toBe('`screenshot.png` ');
+    expect(screen.getByText(/did not reveal where/i)).toBeTruthy();
+  });
+
+  it('says nothing and changes nothing for a drag carrying no file', () => {
+    const { input } = draw();
+    drop(input, { plain: 'just some prose' });
+    expect(input.value).toBe('');
+    expect(screen.queryByText(/did not reveal where/i)).toBe(null);
+  });
+
+  it('refuses a drop while a turn is running', () => {
+    const { input } = draw({ busy: true });
+    drop(input, { uriList: 'file:///a.sql' });
+    expect(input.value).toBe('');
+  });
+});
+
 describe('Composer mentions', () => {
   it('offers agents and skills for an @ token, badged by kind', () => {
     const { input } = draw();

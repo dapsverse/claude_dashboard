@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { applyMention, mentionAt, mentionCandidates } from './mentions.js';
+import { droppedPaths, insertPaths } from './dropPaths.js';
 
 // Why the composer knows about `busy` rather than just "disabled": the three controls here are one
 // mode switch. While a turn is running the textarea is closed and Interrupt is the live action;
@@ -16,6 +17,11 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason, c
   // Escape closes the list without touching the draft. Keyed by the offset of the `@` it was closed
   // on, so dismissing one mention does not silence the next one typed further along.
   const [closedAt, setClosedAt] = useState(null);
+  // Set when a drop revealed names but no locations, which is what Finder does. Shown next to the
+  // composer rather than swallowed, because the draft then holds a bare file name and the user has
+  // to know that is all the browser gave up.
+  const [dropNotice, setDropNotice] = useState(null);
+  const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
 
   const mention = useMemo(() => mentionAt(text, caret), [text, caret]);
@@ -30,21 +36,46 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason, c
     if (el) setCaret(el.selectionStart ?? el.value.length);
   }
 
+  function moveCaretTo(position) {
+    // The caret has to be moved on the element itself: React controls the value, not the selection,
+    // so without this it lands at the end of the draft.
+    const el = inputRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(position, position);
+    });
+  }
+
+  // A drop is read as text, not uploaded: what Claude needs is where the file is, and it already has
+  // Read and Glob on the machine the daemon runs on.
+  function onDrop(e) {
+    setDragging(false);
+    if (blocked) return;
+    const transfer = e.dataTransfer;
+    if (!transfer) return;
+    const found = droppedPaths({
+      uriList: transfer.getData?.('text/uri-list') ?? '',
+      plain: transfer.getData?.('text/plain') ?? '',
+      fileNames: [...(transfer.files ?? [])].map((file) => file?.name).filter(Boolean),
+    });
+    const written = [...found.paths, ...found.unresolved];
+    if (written.length === 0) return;
+    e.preventDefault();
+    const next = insertPaths(text, caret, written);
+    setText(next.text);
+    setCaret(next.caret);
+    moveCaretTo(next.caret);
+    setDropNotice(found.unresolved.length === 0 ? null : found.unresolved);
+  }
+
   function accept(candidate) {
     const next = applyMention(text, mention, candidate);
     setText(next.text);
     setCaret(next.caret);
     setActive(0);
     setClosedAt(null);
-    // The caret has to be moved on the element itself: React controls the value, not the selection,
-    // so without this the caret lands at the end of the draft rather than after the mention.
-    const el = inputRef.current;
-    if (el) {
-      requestAnimationFrame(() => {
-        el.focus();
-        el.setSelectionRange(next.caret, next.caret);
-      });
-    }
+    moveCaretTo(next.caret);
   }
 
   const blocked = busy || disabledReason !== null;
@@ -58,6 +89,7 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason, c
       setText('');                              // only on success: a failed send must not eat the draft
       setCaret(0);
       setClosedAt(null);
+      setDropNotice(null);
     } catch {
       // The failure is already reported in the transcript by whoever owns the session. Swallowing it
       // here keeps the draft the user would otherwise have to retype, and keeps a rejected send from
@@ -80,6 +112,12 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason, c
     <div className="composer">
       <form
         onSubmit={(e) => { e.preventDefault(); send(); }}
+        className={dragging ? 'dragging' : undefined}
+        // dragover has to be cancelled or the browser navigates to the dropped file, replacing the
+        // dashboard with a file viewer and losing the draft.
+        onDragOver={(e) => { e.preventDefault(); if (!blocked) setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
       >
         <label className="sr-only" htmlFor="composer-input">Message to the orchestrator</label>
         <textarea
@@ -138,6 +176,15 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason, c
             ))}
           </ul>
         )}
+        {dropNotice && (
+          <p className="composer-notice" role="status">
+            The browser did not reveal where {dropNotice.length === 1 ? dropNotice[0] : `${dropNotice.length} of those files`} live
+            {dropNotice.length === 1 ? 's' : ''}, so only the name was written in — Claude will look for it in the project.
+            Drop from an editor or a terminal, or paste the full path, to name it exactly.
+            <button type="button" className="btn subtle" onClick={() => setDropNotice(null)}>Dismiss</button>
+          </p>
+        )}
+
         <div className="composer-actions">
           <span className="composer-hint" aria-live="polite">
             {disabledReason ?? (busy ? 'Claude is working — a tool call needing approval will pause here.' : '')}

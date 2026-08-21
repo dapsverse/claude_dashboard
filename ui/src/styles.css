@@ -853,6 +853,22 @@ pre:focus-visible {
 
 /* ---------------------------------------------------------------- permission modal */
 
+/* A drop target has to look like one while a file is over it, or the user cannot tell the composer
+   accepts the drag at all. */
+.composer form.dragging textarea {
+  border-color: var(--running);
+  background: var(--line);
+}
+
+.composer-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* The mention list sits above the textarea, inside the form's positioning context: the composer is
    at the bottom of the window, so a list drawn downwards would be off screen. */
 .composer form { position: relative; }
