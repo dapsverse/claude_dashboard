@@ -18,7 +18,7 @@ function activityLine(activity) {
   return build ? build(activity.data) : null;
 }
 
-export function Chat({ session, runs, now }) {
+export function Chat({ session, runs, now, catalog = null }) {
   const { chat, selected, busy, historyError, permissionNotice, dismissPermissionNotice } = session;
   const scrollerRef = useRef(null);
   const pinnedRef = useRef(true);
@@ -92,6 +92,9 @@ export function Chat({ session, runs, now }) {
       <Composer
         busy={busy}
         disabledReason={disabledReason}
+        // The same catalog the Agents and Skills pages render, reused as the composer's @ list: the
+        // orchestrator can only dispatch what is actually installed.
+        catalog={catalog}
         onSend={session.send}
         onInterrupt={session.interrupt}
         onReset={session.reset}

@@ -1,14 +1,51 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { applyMention, mentionAt, mentionCandidates } from './mentions.js';
 
 // Why the composer knows about `busy` rather than just "disabled": the three controls here are one
 // mode switch. While a turn is running the textarea is closed and Interrupt is the live action;
 // the moment the turn ends — normally, by interrupt, by reset, or by the session dying — the
 // textarea is the live action again. A state where neither is available is a hang report.
-export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason }) {
+export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason, catalog = null }) {
   const [text, setText] = useState('');
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [pending, setPending] = useState(null);
+  // Where the caret is, so the mention under it can be found: the token being typed is the one at the
+  // caret, not the last one in the draft.
+  const [caret, setCaret] = useState(0);
+  const [active, setActive] = useState(0);
+  // Escape closes the list without touching the draft. Keyed by the offset of the `@` it was closed
+  // on, so dismissing one mention does not silence the next one typed further along.
+  const [closedAt, setClosedAt] = useState(null);
   const inputRef = useRef(null);
+
+  const mention = useMemo(() => mentionAt(text, caret), [text, caret]);
+  const candidates = useMemo(
+    () => (mention === null || mention.start === closedAt ? [] : mentionCandidates(catalog, mention.term)),
+    [catalog, mention, closedAt],
+  );
+  const open = candidates.length > 0;
+  const chosen = candidates[Math.min(active, candidates.length - 1)];
+
+  function track(el) {
+    if (el) setCaret(el.selectionStart ?? el.value.length);
+  }
+
+  function accept(candidate) {
+    const next = applyMention(text, mention, candidate);
+    setText(next.text);
+    setCaret(next.caret);
+    setActive(0);
+    setClosedAt(null);
+    // The caret has to be moved on the element itself: React controls the value, not the selection,
+    // so without this the caret lands at the end of the draft rather than after the mention.
+    const el = inputRef.current;
+    if (el) {
+      requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(next.caret, next.caret);
+      });
+    }
+  }
 
   const blocked = busy || disabledReason !== null;
 
@@ -19,6 +56,8 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason })
     try {
       await onSend(body);
       setText('');                              // only on success: a failed send must not eat the draft
+      setCaret(0);
+      setClosedAt(null);
     } catch {
       // The failure is already reported in the transcript by whoever owns the session. Swallowing it
       // here keeps the draft the user would otherwise have to retype, and keeps a rejected send from
@@ -49,9 +88,25 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason })
           value={text}
           rows={3}
           disabled={blocked}
-          placeholder={blocked ? (disabledReason ?? 'Claude is working…') : 'Message the orchestrator.  Enter to send, Shift+Enter for a new line.'}
-          onChange={(e) => setText(e.target.value)}
+          placeholder={blocked ? (disabledReason ?? 'Claude is working…') : 'Message the orchestrator.  @ for agents and skills, Enter to send, Shift+Enter for a new line.'}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="composer-mentions"
+          aria-activedescendant={open ? `mention-${active}` : undefined}
+          aria-autocomplete="list"
+          onChange={(e) => { setText(e.target.value); setActive(0); track(e.target); }}
+          onSelect={(e) => track(e.target)}
+          onClick={(e) => track(e.target)}
           onKeyDown={(e) => {
+            // While the mention list is open it owns the keys that would otherwise send the message:
+            // Enter and Tab take the highlighted entry, the arrows walk it, Escape closes it. An
+            // Enter that both inserted a name and sent the draft is the failure to avoid here.
+            if (open && !e.nativeEvent.isComposing) {
+              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); accept(chosen); return; }
+              if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => (i + 1) % candidates.length); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => (i - 1 + candidates.length) % candidates.length); return; }
+              if (e.key === 'Escape') { e.preventDefault(); setClosedAt(mention.start); return; }
+            }
             // Shift+Enter is a newline; a bare Enter sends. IME composition must be left alone, or
             // every Japanese or Chinese candidate selection would fire the message off half-typed.
             if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
@@ -59,6 +114,30 @@ export function Composer({ busy, onSend, onInterrupt, onReset, disabledReason })
             send();
           }}
         />
+
+        {open && (
+          // Above the textarea rather than below it: the composer sits at the bottom of the window,
+          // and a list drawn downwards would be off screen.
+          <ul className="mentions" id="composer-mentions" role="listbox" aria-label="Agents and skills">
+            {candidates.map((candidate, index) => (
+              <li
+                key={`${candidate.kind}:${candidate.token}`}
+                id={`mention-${index}`}
+                role="option"
+                aria-selected={index === active}
+                className={`mention${index === active ? ' active' : ''}`}
+                // onMouseDown, not onClick: a click would blur the textarea first, and the mention
+                // the caret was in would be gone by the time the handler ran.
+                onMouseDown={(e) => { e.preventDefault(); accept(candidate); }}
+                onMouseEnter={() => setActive(index)}
+              >
+                <span className={`chip ${candidate.kind}`}>{candidate.kind}</span>
+                <span className="mention-name mono">{candidate.token}</span>
+                <span className="mention-desc">{candidate.description}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="composer-actions">
           <span className="composer-hint" aria-live="polite">
             {disabledReason ?? (busy ? 'Claude is working — a tool call needing approval will pause here.' : '')}

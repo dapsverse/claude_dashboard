@@ -853,6 +853,48 @@ pre:focus-visible {
 
 /* ---------------------------------------------------------------- permission modal */
 
+/* The mention list sits above the textarea, inside the form's positioning context: the composer is
+   at the bottom of the window, so a list drawn downwards would be off screen. */
+.composer form { position: relative; }
+
+.mentions {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--stale);
+  border-radius: 6px;
+}
+
+.mention {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mention.active { background: var(--line); }
+.mention-name { font-weight: 600; }
+.mention-desc {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip.agent, .chip.skill { min-width: 38px; text-align: center; }
+
 .rail-head {
   display: flex;
   align-items: baseline;

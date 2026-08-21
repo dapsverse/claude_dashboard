@@ -90,7 +90,7 @@ export function App() {
   const page = path === '/agents' ? <Agents agents={catalog.agents} catalogError={catalogError} />
     : path === '/skills' ? <Skills skills={catalog.skills} catalogError={catalogError} />
     : path === '/activity' ? <Activity runs={runs.filter((r) => r.status !== 'running')} hooksInstalled={hooksInstalled} />
-    : <Chat session={session} runs={runs} now={now} />;
+    : <Chat session={session} runs={runs} now={now} catalog={catalog} />;
 
   return (
     <Layout
