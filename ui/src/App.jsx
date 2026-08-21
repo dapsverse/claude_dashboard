@@ -94,7 +94,16 @@ export function App() {
 
   return (
     <Layout
-      rail={<LiveRail runs={runs} now={now} taskActivity={session.chat.taskActivity} />}
+      rail={(
+        <LiveRail
+          runs={runs}
+          now={now}
+          taskActivity={session.chat.taskActivity}
+          // Scoped to the selected project: a run belongs to one working directory, and the rail was
+          // still showing agents from whatever project was open before this one.
+          projectPath={session.selected}
+        />
+      )}
       sidebar={(
         <ProjectSwitcher
           projects={session.projects}

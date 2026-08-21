@@ -4,6 +4,9 @@ const toRun = (r) => r == null ? null : ({
   prompt: r.prompt, status: r.status, startedAt: r.started_at, endedAt: r.ended_at,
   durationMs: r.duration_ms, resultPreview: r.result_preview, transcriptPath: r.transcript_path,
   agentId: r.agent_id ?? null,
+  // Joined from the session that dispatched the run, not stored on the row: the cwd belongs to the
+  // session, and denormalising it would give the same fact two places to disagree.
+  projectPath: r.project_path ?? null,
 });
 
 export function createRunsRepo(db) {
@@ -20,9 +23,13 @@ export function createRunsRepo(db) {
   // SubagentStop from, and a row that already finished has nothing left to wait for.
   const launchStmt = db.prepare("UPDATE runs SET agent_id = ? WHERE id = ? AND status = 'running'");
   const byAgentStmt = db.prepare("SELECT * FROM runs WHERE agent_id = ? AND status = 'running' ORDER BY started_at ASC LIMIT 1");
-  const getStmt = db.prepare('SELECT * FROM runs WHERE id = ?');
-  const activeStmt = db.prepare("SELECT * FROM runs WHERE status = 'running' ORDER BY started_at DESC");
-  const recentStmt = db.prepare('SELECT * FROM runs ORDER BY started_at DESC LIMIT ?');
+  // Every read of a whole run goes through this projection, so `projectPath` is present on every row
+  // the daemon hands out — the live rail scopes itself by it, and a row that arrived by broadcast
+  // must carry the same field as one that came from the snapshot.
+  const SELECT_RUN = `SELECT r.*, s.project_path FROM runs r LEFT JOIN sessions s ON s.id = r.session_id`;
+  const getStmt = db.prepare(`${SELECT_RUN} WHERE r.id = ?`);
+  const activeStmt = db.prepare(`${SELECT_RUN} WHERE r.status = 'running' ORDER BY r.started_at DESC`);
+  const recentStmt = db.prepare(`${SELECT_RUN} ORDER BY r.started_at DESC LIMIT ?`);
   // duration_ms is set alongside ended_at: the UI reads durationMs for a finished row, so a staled run
   // that only had ended_at rendered as `0s` — indistinguishable from a run that never started.
   const staleStmt = db.prepare(`UPDATE runs SET status = 'stale', ended_at = ?, duration_ms = MAX(0, ? - started_at)

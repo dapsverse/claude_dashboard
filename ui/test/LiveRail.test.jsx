@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { LiveRail } from '../src/components/LiveRail.jsx';
 import { formatElapsed } from '../src/components/RunRow.jsx';
-import { upsertRun, mergeSnapshot } from '../src/components/runList.js';
+import { upsertRun, mergeSnapshot, visibleRuns, finishedIds } from '../src/components/runList.js';
 
 const run = (over = {}) => ({
   id: 's1:t1', sessionId: 's1', agentType: 'programmer', description: 'add auth',
-  status: 'running', startedAt: 1000, endedAt: null, durationMs: null, ...over,
+  status: 'running', startedAt: 1000, endedAt: null, durationMs: null, projectPath: '/proj', ...over,
 });
 
 describe('formatElapsed', () => {
@@ -195,5 +195,67 @@ describe('LiveRail run detail', () => {
       />,
     );
     expect(screen.queryByText('running Grep')).toBeNull();
+  });
+});
+
+describe('visibleRuns', () => {
+  const mine = run({ id: 'mine' });
+  const theirs = run({ id: 'theirs', projectPath: '/other' });
+  const orphan = run({ id: 'orphan', projectPath: null });
+
+  it('keeps only the selected project once one is selected', () => {
+    expect(visibleRuns([mine, theirs], { projectPath: '/proj' }).map((r) => r.id)).toEqual(['mine']);
+  });
+
+  // A run whose session was never recorded cannot be attributed to any project, and hiding it would
+  // strand a running agent with nothing on screen to explain where it went.
+  it('keeps a run that names no project at all', () => {
+    expect(visibleRuns([orphan, theirs], { projectPath: '/proj' }).map((r) => r.id)).toEqual(['orphan']);
+  });
+
+  it('filters nothing before a project is selected', () => {
+    expect(visibleRuns([mine, theirs], { projectPath: null })).toHaveLength(2);
+  });
+
+  it('drops dismissed rows', () => {
+    expect(visibleRuns([mine, orphan], { projectPath: '/proj', dismissed: new Set(['mine']) }).map((r) => r.id))
+      .toEqual(['orphan']);
+  });
+});
+
+describe('finishedIds', () => {
+  it('names every row that is not running', () => {
+    const rows = [run({ id: 'a' }), run({ id: 'b', status: 'done' }), run({ id: 'c', status: 'stale' })];
+    expect(finishedIds(rows)).toEqual(['b', 'c']);
+  });
+});
+
+describe('LiveRail scoping', () => {
+  const props = { now: 2000, taskActivity: {} };
+
+  it('shows only the selected project\'s agents', () => {
+    render(<LiveRail {...props} projectPath="/proj" runs={[run({ id: 'a', description: 'mine' }), run({ id: 'b', description: 'theirs', projectPath: '/other' })]} />);
+    expect(screen.getByText('mine')).toBeTruthy();
+    expect(screen.queryByText('theirs')).toBe(null);
+  });
+
+  it('says the emptiness is about this project when one is selected', () => {
+    render(<LiveRail {...props} projectPath="/proj" runs={[run({ projectPath: '/other' })]} />);
+    expect(screen.getByText(/in this project/)).toBeTruthy();
+  });
+
+  it('clears finished rows on request and leaves running ones alone', () => {
+    render(<LiveRail {...props} projectPath="/proj" runs={[
+      run({ id: 'a', description: 'still working' }),
+      run({ id: 'b', description: 'all done', status: 'done', durationMs: 1000 }),
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: /clear finished/i }));
+    expect(screen.getByText('still working')).toBeTruthy();
+    expect(screen.queryByText('all done')).toBe(null);
+  });
+
+  it('offers nothing to clear when every row is running', () => {
+    render(<LiveRail {...props} projectPath="/proj" runs={[run()]} />);
+    expect(screen.queryByRole('button', { name: /clear finished/i })).toBe(null);
   });
 });

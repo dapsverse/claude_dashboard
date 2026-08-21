@@ -184,6 +184,25 @@ test('close records the agent id a foreground response reports', () => {
   assert.equal(runs.get('s1:t1').agentId, 'ag_7');
 });
 
+// The rail scopes itself to the selected project, and the run row is the only thing it has to scope
+// by. The cwd lives on the session, so every read joins it rather than copying it onto the run.
+test('a run reports the project path of the session that dispatched it', () => {
+  const db = fresh();
+  const runs = createRunsRepo(db);
+  const sessions = createSessionsRepo(db);
+  sessions.touch({ id: 's1', projectPath: '/proj', source: 'terminal', at: 1000 });
+  runs.open(baseRun);
+  assert.equal(runs.get('s1:t1').projectPath, '/proj');
+  assert.equal(runs.listActive()[0].projectPath, '/proj');
+  assert.equal(runs.listRecent()[0].projectPath, '/proj');
+});
+
+test('a run whose session was never recorded reports no project rather than failing', () => {
+  const runs = createRunsRepo(fresh());
+  runs.open(baseRun);
+  assert.equal(runs.get('s1:t1').projectPath, null);
+});
+
 test('pruneBefore deletes finished rows older than the cutoff and keeps running ones', () => {
   const runs = createRunsRepo(fresh());
   runs.open({ ...baseRun, id: 'old' });

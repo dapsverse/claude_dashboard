@@ -853,6 +853,15 @@ pre:focus-visible {
 
 /* ---------------------------------------------------------------- permission modal */
 
+.rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rail-clear { font-size: 11px; padding: 2px 6px; }
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
