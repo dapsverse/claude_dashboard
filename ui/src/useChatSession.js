@@ -30,6 +30,7 @@ export function useChatSession() {
   const [historyError, setHistoryError] = useState(null);
   const [permissionNotice, setPermissionNotice] = useState(null);
   const [sending, setSending] = useState(false);
+  const [decisionAt, setDecisionAt] = useState(null);
 
   // The event handler is created once and must not go stale, so the two things it reads at event
   // time live in refs rather than in its closure. Re-creating it would tear down and re-open the
@@ -127,15 +128,17 @@ export function useChatSession() {
 
   const send = useCallback(async (text) => {
     const projectPath = selectedRef.current;
-    if (projectPath === null) return;
+    if (projectPath === null) return false;
     // The daemon stores the user's message but never broadcasts it back, so the transcript has to
     // show it locally or the user watches their own message vanish.
     setChat((state) => appendUserMessage(state, text, Date.now()));
     setSending(true);
     try {
       await postJson('/api/chat', { projectPath, text });
+      return true;
     } catch (err) {
       fail('Your message could not be sent.', err?.message ?? String(err));
+      return false;
     } finally {
       setSending(false);
     }
@@ -167,6 +170,8 @@ export function useChatSession() {
   const decide = useCallback(async (id, decision, payload) => {
     try {
       await postJson(`/api/permissions/${encodeURIComponent(id)}`, { decision, ...(payload ?? {}) });
+      // Only a delivered user answer acknowledges work; timeout/interrupt events are not answers.
+      setDecisionAt((previous) => Math.max(Date.now(), (previous ?? 0) + 1));
       setPermissionNotice(null);
     } catch (err) {
       if (err?.status === 404) {
@@ -192,7 +197,7 @@ export function useChatSession() {
 
   return {
     projects, projectsError, selected, select, addProject,
-    chat, permissions, historyError, permissionNotice, dismissPermissionNotice: () => setPermissionNotice(null),
+    chat, permissions, decisionAt, historyError, permissionNotice, dismissPermissionNotice: () => setPermissionNotice(null),
     busy: sending || isBusy(chat),
     send, interrupt, reset, decide,
     handleEvent,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { OfficeArt } from './officeArt.jsx';
 import { runToolUseId } from './runList.js';
-import { MAX_DESKS, ROOM, createWorld, strideForward, syncActors, tick } from './officeWorld.js';
+import { MAX_DESKS, ROOM, applyCalls, beginDrag, createWorld, dragTo, endDrag, isOverBin, startBossAck, startBossCall, strideForward, syncActors, tick } from './officeWorld.js';
 
 // 10fps. Pixel art at this scale has nothing to gain from 60, and this panel sits beside a live
 // transcript — it has no business being the most expensive thing on the page.
@@ -59,8 +59,8 @@ const EYES = {
   up: [],
 };
 
-function Actor({ actor }) {
-  const walking = actor.path.length > 0;
+function Actor({ actor, onPointerDown }) {
+  const walking = !actor.dragging && actor.path.length > 0;
   const boss = actor.role === 'orchestrator';
   const skin = boss ? '#f6d3ae' : '#f0c8a0';
   const { shirt, hair } = boss
@@ -80,6 +80,9 @@ function Actor({ actor }) {
         className={`sprite${walking ? ' walking' : ''}${actor.state === 'leaving' ? ' leaving' : ''}`}
         data-run-id={actor.id}
         data-state={actor.state}
+        data-dragging={actor.dragging || undefined}
+        onPointerDown={actor.role === 'worker' ? onPointerDown : undefined}
+        style={actor.role === 'worker' ? { touchAction: 'none', cursor: actor.dragging ? 'grabbing' : 'grab' } : undefined}
       >
         <g className="sprite-body">
           {/* Shadow, so the sprite is standing on the floor rather than floating over it. */}
@@ -95,6 +98,14 @@ function Actor({ actor }) {
           <rect x={-4} y={-1} width={8} height={6} fill={shirt} />
           <rect x={-6} y={-1} width={2} height={4} fill={skin} />
           <rect x={4} y={-1} width={2} height={4} fill={skin} />
+          {actor.state === 'oncall' && (
+            <g className="sprite-phone" transform={actor.facing === 'left' ? 'scale(-1 1)' : undefined}>
+              <rect x={4} y={-3} width={2} height={4} fill={skin} />
+              <rect x={5} y={-7} width={1} height={6} className="off-eye" />
+              <rect x={3} y={-7} width={3} height={2} className="off-eye" />
+              <rect x={3} y={-2} width={3} height={2} className="off-eye" />
+            </g>
+          )}
           <rect x={-3 - spread} y={5} width={2} height={4} className="sprite-legs" />
           <rect x={1 + spread} y={5} width={2} height={4} className="sprite-legs" />
         </g>
@@ -141,10 +152,62 @@ function Bubble({ actor, text }) {
 // of truth — the list below it already says the same thing in words, which is what makes the scene
 // itself safe to hide from assistive technology entirely. officeWorld.js owns the behaviour; this
 // component owns the clock and the pixels.
-export function OfficeScene({ runs, taskActivity = {}, expanded = false, onToggleExpand = null }) {
+export function OfficeScene({
+  runs, taskActivity = {}, expanded = false, onToggleExpand = null,
+  messageAt = null, decisionAt = null, callingRunIds = [], bossCalling = false, onTrashRun = null,
+}) {
   const runningRuns = runs.filter((r) => r.status === 'running');
   const reduced = usePrefersReducedMotion();
   const [world, setWorld] = useState(createWorld);
+  const [now, setNow] = useState(Date.now);
+  // Mounting with an existing transcript establishes a baseline, not a new-message notification.
+  const lastMessageAt = useRef(messageAt);
+  const lastDecisionAt = useRef(decisionAt);
+  const drag = useRef(null);
+
+  function pointerPosition(event) {
+    const svg = event.currentTarget.ownerSVGElement ?? event.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    // The default SVG meet alignment can letterbox the expanded office.
+    const scale = Math.min(rect.width / ROOM.w, rect.height / ROOM.h);
+    return [(event.clientX - rect.left - (rect.width - ROOM.w * scale) / 2) / scale,
+      (event.clientY - rect.top - (rect.height - ROOM.h * scale) / 2) / scale];
+  }
+
+  function pointerDown(event, actor) {
+    if (event.button !== 0 || drag.current || !onTrashRun) return;
+    const point = pointerPosition(event);
+    if (!point) return;
+    event.preventDefault();
+    const svg = event.currentTarget.ownerSVGElement;
+    svg.setPointerCapture(event.pointerId);
+    drag.current = { id: actor.id, pointerId: event.pointerId };
+    setWorld((current) => dragTo(beginDrag(current, actor.id), actor.id, ...point));
+  }
+
+  function pointerMove(event) {
+    const active = drag.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    const point = pointerPosition(event);
+    if (point) setWorld((current) => dragTo(current, active.id, ...point));
+  }
+
+  function pointerEnd(event, cancelled = false) {
+    const active = drag.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    drag.current = null;
+    const point = pointerPosition(event);
+    setWorld((current) => endDrag(current, active.id, { instant: reduced }));
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!cancelled && point && isOverBin(...point)) onTrashRun?.(active.id);
+  }
+
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), reduced ? 60000 : 1000);
+    return () => clearInterval(timer);
+  }, [reduced]);
 
   // Keyed by the sorted set of running ids so the effect only reruns when who is running actually
   // changes, not on every unrelated re-render of the rail (a tick of `now`, a different run's
@@ -157,11 +220,43 @@ export function OfficeScene({ runs, taskActivity = {}, expanded = false, onToggl
     setWorld((current) => syncActors(current, latest.current, { instant: reduced }));
   }, [key, reduced]);
 
+  const callKey = JSON.stringify([...callingRunIds].sort());
+  useEffect(() => {
+    setWorld((current) => applyCalls(current, {
+      callingIds: new Set(JSON.parse(callKey)), bossCalling, rng: Math.random, instant: reduced,
+    }));
+  }, [callKey, bossCalling, key, reduced]);
+
+  useEffect(() => {
+    if (!Number.isFinite(messageAt)) return;
+    if (lastMessageAt.current !== null && messageAt <= lastMessageAt.current) return;
+    lastMessageAt.current = messageAt;
+    setWorld(startBossCall);
+  }, [messageAt]);
+
+  useEffect(() => {
+    if (!Number.isFinite(decisionAt)) return;
+    if (lastDecisionAt.current !== null && decisionAt <= lastDecisionAt.current) return;
+    lastDecisionAt.current = decisionAt;
+    setWorld(startBossAck);
+  }, [decisionAt]);
+
   useEffect(() => {
     if (reduced) return undefined;
     const timer = setInterval(() => setWorld((current) => tick(current, TICK_MS)), TICK_MS);
     return () => clearInterval(timer);
   }, [reduced]);
+
+  const boss = world.actors.find((actor) => actor.role === 'orchestrator');
+  const callRemaining = boss.state === 'oncall' || boss.state === 'ack' ? boss.timer : 0;
+  useEffect(() => {
+    // Status still expires with motion disabled; a one-shot timeout never advances a walk.
+    if (!reduced || callRemaining <= 0) return undefined;
+    const timer = setTimeout(() => {
+      setWorld((current) => tick(current, callRemaining, Math.random, { instant: true }));
+    }, callRemaining);
+    return () => clearTimeout(timer);
+  }, [reduced, callRemaining, boss.state, world.callVersion]);
 
   // What each agent gets to say, and deliberately NOT the name of the tool it is inside. "running
   // Bash" is not a thought anybody has ever had at a desk; what it was asked to do — "Count 1 to
@@ -198,13 +293,15 @@ export function OfficeScene({ runs, taskActivity = {}, expanded = false, onToggl
 
   return (
     <div className={`office${expanded ? ' expanded' : ''}`}>
-      <svg viewBox={`0 0 ${ROOM.w} ${ROOM.h}`} className="office-scene" aria-hidden="true">
-        <OfficeArt />
+      <svg viewBox={`0 0 ${ROOM.w} ${ROOM.h}`} className="office-scene" aria-hidden="true"
+        onPointerMove={pointerMove} onPointerUp={pointerEnd}
+        onPointerCancel={(event) => pointerEnd(event, true)} onLostPointerCapture={(event) => pointerEnd(event, true)}>
+        <OfficeArt now={now} reducedMotion={reduced} binActive={world.actors.some((a) => a.dragging && isOverBin(a.x, a.y))} />
         {/* Back row before front row, so a sprite in the aisle overlaps the desk it is standing in
             front of rather than being swallowed by it. */}
         {[...world.actors]
-          .sort((a, b) => a.y - b.y)
-          .map((actor) => <Actor key={actor.id} actor={actor} />)}
+          .sort((a, b) => Number(!!a.dragging) - Number(!!b.dragging) || a.y - b.y)
+          .map((actor) => <Actor key={actor.id} actor={actor} onPointerDown={(event) => pointerDown(event, actor)} />)}
         {bubbles.map(({ actor, text }) => <Bubble key={actor.id} actor={actor} text={text} />)}
       </svg>
       {overflow > 0 && <span className="office-overflow" aria-hidden="true">+{overflow}</span>}

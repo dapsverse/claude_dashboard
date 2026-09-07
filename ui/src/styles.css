@@ -431,7 +431,7 @@ table.activity td:first-child {
   /* The bob is all that is left in CSS. The walking itself is a JS tick, which no stylesheet can
      stop — OfficeScene reads the same query with matchMedia and does not start the interval at all,
      seating everyone at their desks instead. */
-  .sprite-body { animation: none; }
+  .office-scene .sprite-body { animation: none; }
   .shell, main { transition: none; }
 }
 
@@ -1138,6 +1138,9 @@ pre:focus-visible {
 }
 
 .sprite.walking .sprite-body { animation: none; }
+.sprite[data-state="oncall"] .sprite-body { animation: none; }
+.sprite[data-state="ack"] .sprite-body,
+.sprite[data-dragging="true"] .sprite-body { animation: none; }
 .sprite.leaving { opacity: 0.75; }
 
 @keyframes office-bob {
@@ -1191,7 +1194,26 @@ main { transition: opacity 200ms ease, padding 260ms ease; }
   opacity: 0;
 }
 
-.shell.office-expanded .office { margin-bottom: 16px; }
+/* Expanded, the rail becomes the whole page, and `width: 100%` then lets the scene scale to
+   whatever width that gives it: on a wide monitor the 256x160 room becomes ~875px tall and pushes
+   the agent list below the fold, so expanding the office costs you the thing the office is a
+   summary of. Cap the height against the viewport instead, and derive the width back from it
+   (256/160 = 1.6) rather than letting the SVG letterbox itself inside a full-width box — the box
+   matching the room's own ratio is what keeps the brown surround from showing as bars. The 150px is
+   measured off the rest of the rail rather than guessed: 32px of rail padding, this element's own
+   16px margin, ~30px of "Live agents" header, and ~70px so the first agent row stays on screen.
+   It trades directly against that list — give the room more height and the rows go under the fold.
+
+   The 90% is the taste half, and it cannot be the whole rule: 90% of a wide column is still a room
+   ~790px tall, so a width percentage alone brings the scrollbar straight back. `min()` takes
+   whichever binds first — the 90% breathing room on a tall window, the viewport cap on a wide one. */
+.shell.office-expanded .office {
+  margin-bottom: 16px;
+  max-width: min(90%, calc((100vh - 150px) * 1.6));
+  margin-inline: auto;
+}
+
+.shell.office-expanded .office-scene { max-height: calc(100vh - 150px); }
 
 .office-overflow {
   position: absolute;
@@ -1213,7 +1235,11 @@ main { transition: opacity 200ms ease, padding 260ms ease; }
   align-items: center;
   justify-content: center;
   padding: 24px;
-  z-index: 10;
+  /* Highest fixed-position layer in this file on purpose. `.question-dock` below sits at 11 — a
+     blocked tool call must always outrank a "Claude is asking" reminder bar, never the other way
+     round, so this stays above whatever z-index gets added to this file next unless someone reads
+     this comment and moves it up too. */
+  z-index: 20;
 }
 
 .modal {

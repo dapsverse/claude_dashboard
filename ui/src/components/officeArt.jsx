@@ -7,7 +7,7 @@
 // agent has to agree with (seats, the pantry, the door) come from officeWorld.js rather than being
 // repeated here — the two files disagreeing is how you get someone sipping coffee in mid-air.
 
-import { DESK_SEATS, DOOR, FLOOR_TOP, LANE, ROOM } from './officeWorld.js';
+import { BIN_RECT, DESK_SEATS, DOOR, FLOOR_TOP, LANE, ROOM } from './officeWorld.js';
 
 // Planks run across the room, seams staggered row to row. Two shades alternating is the whole
 // effect; a third would not survive being 12 pixels tall.
@@ -128,21 +128,25 @@ function Whiteboard() {
   );
 }
 
-function Clock() {
+function Clock({ now, reducedMotion }) {
+  const date = new Date(now);
+  const h = date.getHours();
+  const m = date.getMinutes();
+  const s = date.getSeconds();
   return (
     <g>
       <circle cx={232} cy={12} r={7} className="off-wood-dark" />
       <circle cx={232} cy={12} r={5} className="off-board" />
-      <rect x={232} y={8} width={1} height={5} className="off-board-ink" />
-      <rect x={232} y={12} width={4} height={1} className="off-board-ink" />
+      <rect data-clock-hand="hour" x={231.5} y={9} width={1} height={3} className="off-board-ink" transform={`rotate(${((h % 12) + m / 60) * 30} 232 12)`} />
+      <rect data-clock-hand="minute" x={231.5} y={8} width={1} height={4} className="off-board-ink" transform={`rotate(${(m + s / 60) * 6} 232 12)`} />
+      {!reducedMotion && <rect data-clock-hand="second" x={231.75} y={8} width={0.5} height={4} fill="var(--accent)" transform={`rotate(${s * 6} 232 12)`} />}
     </g>
   );
 }
 
 // One flat layer, drawn in back-to-front order. Nothing here is interactive and nothing here is
-// state — the whole component could be a static string, and is only JSX so the coordinates can be
-// read from officeWorld.
-export function OfficeArt() {
+// state — the clock reads its time from the scene so this layer owns no timers.
+export function OfficeArt({ now = 0, reducedMotion = false, binActive = false }) {
   return (
     <g>
       <rect x={0} y={0} width={ROOM.w} height={ROOM.h} className="off-wall" />
@@ -156,7 +160,7 @@ export function OfficeArt() {
       <Window x={30} />
       <Window x={106} />
       <Whiteboard />
-      <Clock />
+      <Clock now={now} reducedMotion={reducedMotion} />
 
       {/* The rug sits in the aisle, which is exactly where the traffic is. */}
       <rect x={60} y={LANE - 14} width={104} height={28} className="off-rug" />
@@ -170,6 +174,13 @@ export function OfficeArt() {
 
       <Pantry />
       <Cooler />
+      <g data-office-bin data-active={binActive} transform={`translate(${BIN_RECT.x} ${BIN_RECT.y})`}>
+        <rect x={2} y={4} width={BIN_RECT.w - 4} height={BIN_RECT.h - 4} className="off-metal" />
+        <rect x={0} y={2} width={BIN_RECT.w} height={3} className="off-wood-dark" />
+        <rect x={6} y={0} width={6} height={2} className="off-metal" />
+        {[5, 8, 11].map((x) => <rect key={x} x={x} y={7} width={1} height={7} className="off-wood-dark" />)}
+        {binActive && <rect x={0} y={0} width={BIN_RECT.w} height={BIN_RECT.h} fill="none" stroke="var(--accent)" strokeWidth={2} />}
+      </g>
       {DESK_SEATS.map((seat, i) => <Desk key={i} seat={seat} />)}
       <Plant x={10} y={138} />
       <Plant x={232} y={138} />

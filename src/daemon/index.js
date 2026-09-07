@@ -23,6 +23,7 @@ import { createResumeScheduler } from '../chat/resume.js';
 import { createPermissionGate } from '../chat/permissions.js';
 import { createCatalog } from '../catalog/index.js';
 import { startSweeper } from '../core/sweeper.js';
+import { sweepDeadRuns } from './sweepers.js';
 import { hooksInstalled } from '../cli/hook-config.js';
 
 export const VERSION = '0.1.0';
@@ -86,12 +87,18 @@ export async function startDaemon({
     // The gate and the session manager are separate on purpose: the gate is the security boundary
     // and knows nothing about the SDK, and the manager cannot answer its own permission prompts.
     const permissions = createPermissionGate({ hub, now });
+    // Declared before the session manager because the manager reports every activity message into
+    // it. This is what finally closes a subagent the user stopped mid-session: the run row used to
+    // stay 'running' while the activity feed already said 'stopped', and the office scene kept the
+    // actor at its desk for the whole 30-minute stale window.
+    const deadRuns = sweepDeadRuns({ runs, sessions, hub, now });
     // Declared before the manager because the manager's end-of-session callback reaches for it, and
     // the scheduler in turn needs the manager to send with. One of the two has to be filled in
     // afterwards; a `let` is the whole of the trick.
     let resumes = null;
     const chatSessions = createSessionManager({
       store: chat, hub, now, permissions,
+      onActivity: (message) => deadRuns.noteActivity(message),
       // The CLI that would have fired SessionEnd is the process that just died, so nothing else
       // closes the subagents it dispatched — they sat in the rail claiming to be alive until the
       // 30-minute sweeper reached them. Closing them here is what makes the rail stop lying.
@@ -141,6 +148,7 @@ export async function startDaemon({
 
     writeRuntime({ pid: process.pid, port, token, startedAt: now(), version: VERSION }, runtimeFile);
     const stopSweeper = startSweeper({ runs, hub, now });
+    deadRuns.start();
 
     return {
       server, port, token,
@@ -148,6 +156,9 @@ export async function startDaemon({
       async stop() {
         try {
           stopSweeper();
+          // Both timers, not just the old one: an interval left running here outlives stop() and
+          // keeps writing to a database the line below is about to close.
+          deadRuns.stop();
           resumes.stop();
           // Sessions first: each holds a child process and an open permission prompt may be
           // parked on a promise. Closing the gate afterwards denies anything still waiting, so

@@ -49,7 +49,7 @@ const tokens = (usage) => {
   return total > 0 ? total : null;
 };
 
-export function RunRow({ run, now, activity, expanded = false, onToggle }) {
+export function RunRow({ run, now, activity, expanded = false, onToggle, onTrashRun }) {
   const elapsed = run.status === 'running' ? now - run.startedAt : (run.durationMs ?? 0);
   const working = run.status === 'running';
   const doing = working ? activitySummary(activity) : null;
@@ -89,6 +89,11 @@ export function RunRow({ run, now, activity, expanded = false, onToggle }) {
 
       {expanded && (
         <div className="run-detail">
+          {onTrashRun && (
+            <button type="button" className="btn subtle" onClick={() => onTrashRun(run.id)}>
+              {working ? 'Take over' : 'Dismiss'}
+            </button>
+          )}
           <dl>
             <dt>status</dt>
             <dd>

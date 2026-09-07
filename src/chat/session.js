@@ -86,6 +86,11 @@ export function createSessionManager({
   // fired SessionEnd is the process that just died. Without this the rail keeps claiming those
   // subagents are alive until the 30-minute sweeper gets to them.
   onSessionEnd,
+  // Called for every activity message a live session emits. The heartbeat half tells the liveness
+  // sweeper this session is still working; the task_notification half is the only place a subagent
+  // stopped mid-session is ever announced — an interrupted agent fires no SubagentStop, so without
+  // this its run sits `running` until the 30-minute sweeper.
+  onActivity,
 }) {
   const live = new Map();       // projectPath -> session
   const starting = new Map();   // projectPath -> Promise<session>, so racing sends start one session
@@ -418,8 +423,13 @@ export function createSessionManager({
     emit('chat.status', session.projectPath, { state: 'idle', sessionId: session.sessionId ?? null });
   }
 
-  const activity = (session, kind, data) =>
-    emit('chat.status', session.projectPath, { state: 'activity', kind, data, sessionId: session.sessionId ?? null });
+  const activity = (session, kind, data) => {
+    // Before the broadcast and never able to stop it: a listener that throws must not cost the
+    // browser the activity event, and this runs on the SDK's own message loop.
+    try { onActivity?.({ sessionId: session.sessionId ?? null, projectPath: session.projectPath, kind, data }); }
+    catch { /* the sweeper's bookkeeping is not worth a dropped message */ }
+    return emit('chat.status', session.projectPath, { state: 'activity', kind, data, sessionId: session.sessionId ?? null });
+  };
   const warning = (session, kind, data) =>
     emit('chat.status', session.projectPath, { state: 'warning', kind, data, sessionId: session.sessionId ?? null });
 

@@ -64,6 +64,32 @@ export const initialChatState = {
 
 export const isBusy = (state) => BUSY_STATES.has(state.status);
 
+// The office phone marks both sides of a conversation: the user's locally echoed send and the
+// assistant's received message each start a short notification. Streaming deltas and unrelated
+// activity do not represent another message, and the maximum timestamp keeps late events from
+// moving the signal backwards. The assistant-only helper remains available to existing callers.
+export function latestMessageAt(chat) {
+  let latest = null;
+  for (const item of chat.items) {
+    if (item.kind === 'message' && (item.role === 'user' || item.role === 'assistant')
+      && Number.isFinite(item.ts)) {
+      if (latest === null || item.ts > latest) latest = item.ts;
+    }
+  }
+  return latest;
+}
+
+/** Final assistant timestamps only, retained for callers that do not include user sends. */
+export function latestAssistantMessageAt(state) {
+  let latest = null;
+  for (const item of state.items) {
+    if (item.kind === 'message' && item.role === 'assistant' && Number.isFinite(item.ts)) {
+      if (latest === null || item.ts > latest) latest = item.ts;
+    }
+  }
+  return latest;
+}
+
 // A session that is speaking again did not die: whatever stopped it last time is history, and so is
 // any automatic attempt armed for it. Cleared on every state that only a live session can report,
 // which is what makes the rate-limit banner disappear the moment the conversation comes back rather

@@ -76,6 +76,14 @@ export function createRunsRepo(db) {
     SET status = 'stale', ended_at = ?, duration_ms = MAX(0, ? - started_at),
         stop_reason = COALESCE(stop_reason, ?)
     WHERE status = 'running' AND session_id = ?`);
+  // A known interruption ends just this run, even if the sweeper already guessed it was stale.
+  // Replace the guessed timing and clear its stop reason; the caller's reason becomes the result.
+  // COALESCE preserves an existing preview if the reason is explicitly null; the status guard makes
+  // retries leave the first ending intact and report no change for the caller to broadcast.
+  const endRunStmt = db.prepare(`UPDATE runs
+    SET status = 'done', ended_at = ?, duration_ms = MAX(0, ? - started_at),
+        result_preview = COALESCE(?, result_preview), stop_reason = NULL
+    WHERE id = ? AND status IN ('running', 'stale')`);
   const sessionOpenIdsStmt = db.prepare("SELECT id FROM runs WHERE status = 'running' AND session_id = ?");
   // `agent_id IS NULL` is what keeps the heuristic away from a background run: that one was launched
   // with an exact id and can only be matched by it, so guessing here would attach one agent's
@@ -161,6 +169,10 @@ export function createRunsRepo(db) {
       const ids = sessionOpenIdsStmt.all(sessionId).map((r) => r.id);
       endSessionStmt.run(now, now, reason ?? null, sessionId);
       return ids;
+    },
+    // The caller broadcasts run.close only when this single run actually transitions to done.
+    endRun(runId, now, reason = 'stopped') {
+      return endRunStmt.run(now, now, reason ?? null, runId).changes > 0;
     },
     /**
      * Clears finished rows out of the live rail for good. Returns only the ids it actually

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react';
 import { App } from '../src/App.jsx';
 
 class FakeEventSource {
@@ -20,6 +20,65 @@ const RUN = {
   id: 's1:t1', sessionId: 's1', agentType: 'programmer', description: 'add auth',
   status: 'running', startedAt: Date.now(), endedAt: null, durationMs: null,
 };
+
+describe('App office call signals', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('raises the boss handset when the user presses Send without waiting for an assistant event', async () => {
+    FakeEventSource.instances = [];
+    window.localStorage.clear();
+    window.history.replaceState(null, '', '/');
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const fallback = respond();
+    const fetchMock = vi.fn(async (path, options) => {
+      if (path === '/api/projects') return { ok: true, json: async () => ({ projects: [{ path: '/project', name: 'project' }] }) };
+      if (path.startsWith('/api/chat/history')) return { ok: true, json: async () => ({ messages: [], pendingPermissions: [] }) };
+      return fallback(path, options);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(<App />);
+    const input = await screen.findByRole('combobox', { name: 'Message to the orchestrator' });
+    await waitFor(() => expect(input.disabled).toBe(false));
+    const boss = () => container.querySelector('.sprite[data-run-id="__orchestrator__"]');
+    expect(boss().querySelector('.sprite-phone')).toBeNull();
+    fireEvent.change(input, { target: { value: 'hello' } });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
+    expect(fetchMock).toHaveBeenCalledWith('/api/chat', expect.objectContaining({ method: 'POST' }));
+    expect(boss().querySelector('.sprite-phone')).toBeTruthy();
+  });
+
+  it('derives calls from both message roles and holds the boss for every open modal', async () => {
+    FakeEventSource.instances = [];
+    window.localStorage.clear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.stubGlobal('fetch', respond({ runs: { active: [{ ...RUN, agentId: 'worker-a' }], recent: [] } }));
+    const { container } = render(<App />);
+    await screen.findByText('programmer');
+    const sprite = (id) => container.querySelector(`.sprite[data-run-id="${id}"]`);
+    const stream = FakeEventSource.instances[0];
+    const request = { id: 'worker-p', agentId: 'worker-a', projectPath: null, kind: 'question', toolName: 'AskUserQuestion' };
+
+    await act(async () => { stream.emit('permission.request', request); });
+    expect(sprite(RUN.id).getAttribute('data-state')).toBe('oncall');
+    expect(sprite('__orchestrator__').getAttribute('data-state')).toBe('oncall');
+    await act(async () => { stream.emit('permission.request', { ...request, id: 'boss-p', agentId: null }); });
+    expect(sprite('__orchestrator__').getAttribute('data-state')).toBe('oncall');
+    await act(async () => { stream.emit('permission.resolved', { id: 'worker-p' }); });
+    expect(sprite(RUN.id).getAttribute('data-state')).not.toBe('oncall');
+    expect(sprite('__orchestrator__').getAttribute('data-state')).toBe('oncall');
+    await act(async () => { stream.emit('permission.resolved', { id: 'boss-p' }); });
+    expect(sprite('__orchestrator__').getAttribute('data-state')).toBe('idle');
+
+    await act(async () => {
+      stream.emit('chat.message', { projectPath: null, role: 'user', messageId: 'u', ts: 1000, blocks: [{ type: 'text', text: 'hello' }] });
+    });
+    expect(sprite('__orchestrator__').getAttribute('data-state')).toBe('oncall');
+    await act(async () => {
+      stream.emit('chat.message', { projectPath: null, role: 'assistant', messageId: 'a', ts: 2000, blocks: [{ type: 'text', text: 'reply' }] });
+    });
+    expect(sprite('__orchestrator__').getAttribute('data-state')).toBe('oncall');
+  });
+});
 
 function respond({ runs = { active: [RUN], recent: [] }, runsStatus = 200 } = {}) {
   return vi.fn(async (path) => {

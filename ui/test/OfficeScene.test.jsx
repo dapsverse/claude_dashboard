@@ -43,7 +43,9 @@ describe('OfficeScene', () => {
   it('walks a sprite to its desk over the following seconds', () => {
     vi.useFakeTimers();
     const { container } = render(<OfficeScene runs={[running('a')]} />);
-    act(() => { vi.advanceTimersByTime(20000); });
+    // Allow the entrance walk to finish, then check before the shortest working stint can expire.
+    // At twenty seconds the worker may already have randomly chosen to leave for the pantry.
+    act(() => { vi.advanceTimersByTime(6000); });
     expect(seatOf(sprites(container)[0])).toEqual(DESK_SEATS[0]);
   });
 
@@ -260,7 +262,9 @@ describe('OfficeScene', () => {
         // Straight to the desk: there is no tick to carry it there, so a walk-in would leave the
         // sprite parked in the doorway for the rest of the session.
         expect(seatOf(sprites(container)[0])).toEqual(DESK_SEATS[0]);
-        expect(setInterval).not.toHaveBeenCalled();
+        // The wall clock updates once a minute; the 100ms movement simulation stays off.
+        expect(setInterval).toHaveBeenCalledTimes(1);
+        expect(setInterval).toHaveBeenCalledWith(expect.any(Function), 60000);
       } finally {
         vi.unstubAllGlobals();
         setInterval.mockRestore();

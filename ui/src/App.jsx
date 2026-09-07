@@ -10,9 +10,11 @@ import { Activity } from './pages/Activity.jsx';
 import { Chat } from './pages/Chat.jsx';
 import { useRoute } from './router.jsx';
 import { connectStream, fetchJson } from './api.js';
-import { upsertRun, mergeSnapshot, dropRuns } from './components/runList.js';
+import { upsertRun, mergeSnapshot, dropRuns, visibleRuns } from './components/runList.js';
 import { useChatSession } from './useChatSession.js';
 import { questionPreamble } from './components/questionContext.js';
+import { latestMessageAt } from './components/chatState.js';
+import { officeCalls } from './components/officeCalls.js';
 
 export function App() {
   const [runs, setRuns] = useState([]);
@@ -27,6 +29,7 @@ export function App() {
   const streamed = useRef(new Set());
   const session = useChatSession();
   const { handleEvent } = session;
+  const calls = officeCalls(session.permissions, visibleRuns(runs, { projectPath: session.selected }));
 
   useEffect(() => {
     const stop = connectStream({
@@ -114,6 +117,11 @@ export function App() {
           runs={runs}
           now={now}
           taskActivity={session.chat.taskActivity}
+          messageAt={latestMessageAt(session.chat)}
+          decisionAt={session.decisionAt}
+          onTakeover={session.send}
+          callingRunIds={calls.callingRunIds}
+          bossCalling={calls.bossCalling}
           // Scoped to the selected project: a run belongs to one working directory, and the rail was
           // still showing agents from whatever project was open before this one.
           projectPath={session.selected}
@@ -130,23 +138,11 @@ export function App() {
           error={session.projectsError}
         />
       )}
-    >
-      {/* Never replaces the page: a dropped stream leaves the last known rows on screen, and blanking
-          them would destroy the only state the user still has. The clock keeps ticking on those rows,
-          so saying the connection is gone is the difference between stale data and a lie. */}
-      {connectionError && (
-        <p className="notice" role="status">
-          {connectionError === 'unauthorized'
-            ? <>Session expired — reopen the URL printed by <code>agentpanel open</code>.</>
-            : <>Lost the connection to the agentpanel daemon ({connectionError}). Live updates are
-              paused and anything below may be out of date. Check <code>agentpanel status</code>; if
-              the daemon was restarted, reopen the URL printed by <code>agentpanel open</code>.</>}
-        </p>
-      )}
-      {page}
-      {/* Outside the routed page on purpose: a blocked tool call is not a thing the user should be
-          able to walk away from by clicking Agents. */}
-      {session.permissions.length > 0 && (
+      // A blocked tool call is not a thing the user should be able to walk away from by clicking
+      // Agents — but it also must not ride inside `<main>`, which the office-expanded layout fades
+      // out with `opacity: 0`. Layout renders `modal` as a sibling of `main` for exactly that reason;
+      // see the comment there before moving this back into children.
+      modal={session.permissions.length > 0 && (
         session.permissions[0].kind === 'question'
           // A question and an approval are different acts. Sharing one modal is how a question
           // ended up behind an Allow button that answered nothing.
@@ -173,6 +169,20 @@ export function App() {
             />
           )
       )}
+    >
+      {/* Never replaces the page: a dropped stream leaves the last known rows on screen, and blanking
+          them would destroy the only state the user still has. The clock keeps ticking on those rows,
+          so saying the connection is gone is the difference between stale data and a lie. */}
+      {connectionError && (
+        <p className="notice" role="status">
+          {connectionError === 'unauthorized'
+            ? <>Session expired — reopen the URL printed by <code>agentpanel open</code>.</>
+            : <>Lost the connection to the agentpanel daemon ({connectionError}). Live updates are
+              paused and anything below may be out of date. Check <code>agentpanel status</code>; if
+              the daemon was restarted, reopen the URL printed by <code>agentpanel open</code>.</>}
+        </p>
+      )}
+      {page}
     </Layout>
   );
 }

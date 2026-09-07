@@ -48,6 +48,38 @@ export const DESK_SEATS = [
 
 export const PANTRY_SPOT = [214, 56];
 export const COOLER_SPOT = [216, 122];
+export const BIN_RECT = { x: 196, y: 140, w: 18, h: 16 };
+export const BIN_SPOT = [205, 148];
+
+export function isOverBin(x, y) {
+  return Number.isFinite(x) && Number.isFinite(y)
+    && x >= BIN_RECT.x && x <= BIN_RECT.x + BIN_RECT.w
+    && y >= BIN_RECT.y && y <= BIN_RECT.y + BIN_RECT.h;
+}
+
+export function beginDrag(world, id) {
+  return { ...world, actors: world.actors.map((a) => a.id === id && a.role === 'worker' && !a.dragging
+    ? { ...a, dragging: true, dragOrigin: [a.x, a.y] } : a) };
+}
+
+export function dragTo(world, id, x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return world;
+  return { ...world, actors: world.actors.map((a) => a.id === id && a.dragging ? { ...a, x, y } : a) };
+}
+
+export function endDrag(world, id, { rng = Math.random, instant = false } = {}) {
+  return { ...world, actors: world.actors.map((a) => {
+    if (a.id !== id || !a.dragging) return a;
+    // Restore the origin so the frozen route still starts where the walk was interrupted.
+    const next = { ...a, x: a.dragOrigin[0], y: a.dragOrigin[1], dragging: false, dragOrigin: null };
+    if (instant && next.state !== 'oncall' && next.state !== 'leaving') {
+      [next.x, next.y] = DESK_SEATS[next.deskIndex];
+      next.path = [];
+      sendHome(next, rng);
+    }
+    return next;
+  }) };
+}
 
 // Where the orchestrator is willing to stand. A list rather than a random point in the rectangle:
 // random coordinates put it inside a desk about a third of the time.
@@ -60,6 +92,7 @@ export const PATROL_SPOTS = [
 export const ORCHESTRATOR_ID = '__orchestrator__';
 
 export const MAX_DESKS = DESK_SEATS.length;
+export const CALL_MS = 2500;
 
 // Pixels per second. Slow enough to read as walking at this scale; the sprite is 12px wide.
 const SPEED = 34;
@@ -93,11 +126,16 @@ const ACTIVITY_WEIGHTS = [
 ];
 
 const BUBBLE = {
+  oncall: '☎',
   coffee: '☕',
   cooler: 'brb',
   stretching: 'ngh...',
   chatting: '...',
 };
+
+// A single fixed line reads as scripted the tenth time it pops up, so the acknowledgement
+// is picked at random from a small pool instead of hardcoded to one phrase.
+export const ACK_BUBBLES = ['Okay boss', 'Consider it done boss', 'Affirmative boss'];
 
 // ---------------------------------------------------------------- helpers
 
@@ -210,6 +248,11 @@ function reseat(actor, spec, { rng, instant }) {
 }
 
 export function syncActors(world, runningRuns, { rng = Math.random, instant = false } = {}) {
+  // A completed run must leave from its real position, even if completion arrived mid-drag.
+  const runningIds = new Set(runningRuns.map((run) => run.id));
+  for (const a of world.actors) {
+    if (a.dragging && !runningIds.has(a.id)) world = endDrag(world, a.id, { rng, instant });
+  }
   const present = world.actors
     .filter((a) => a.role === 'worker' && a.state !== 'leaving')
     .map((a) => ({ runId: a.id, agentType: a.agentType, deskIndex: a.deskIndex }));
@@ -293,6 +336,80 @@ function sendHome(a, rng) {
   a.path = route(a.x, a.y, seatX, seatY);
 }
 
+function endCall(a, rng, instant) {
+  a.callHeld = false;
+  a.bubble = null;
+  a.partner = null;
+  if (a.role === 'orchestrator') {
+    a.state = 'idle';
+    a.next = 'idle';
+    a.timer = between(rng, DURATION.idle);
+  } else {
+    // With no movement ticks, returning home must also be instantaneous.
+    if (instant) [a.x, a.y] = DESK_SEATS[a.deskIndex];
+    sendHome(a, rng);
+  }
+}
+
+function startCall(a) {
+  return { ...a, state: 'oncall', next: 'oncall', path: [], partner: null, bubble: BUBBLE.oncall };
+}
+
+function acknowledge(a, rng = Math.random) {
+  const bubble = ACK_BUBBLES[Math.floor(rng() * ACK_BUBBLES.length)];
+  return { ...a, state: 'ack', next: 'ack', path: [], partner: null,
+    bubble, timer: CALL_MS, callHeld: false, ackPending: false };
+}
+
+export function startBossAck(world, rng = Math.random) {
+  return {
+    ...world,
+    callVersion: (world.callVersion ?? 0) + 1,
+    actors: world.actors.map((a) => a.role !== 'orchestrator' ? a
+      : a.callHeld ? { ...a, ackPending: true } : acknowledge(a, rng)),
+  };
+}
+
+/** A user send or assistant message renews the short call without releasing a pending decision. */
+export function startBossCall(world) {
+  return {
+    ...world,
+    // A renewal must re-arm the reduced-motion timeout even when the timer is still 2500.
+    callVersion: (world.callVersion ?? 0) + 1,
+    actors: world.actors.map((a) => a.role === 'orchestrator'
+      ? { ...startCall(a), callHeld: a.callHeld === true, timer: CALL_MS } : a),
+  };
+}
+
+export function applyCalls(world, { callingIds, bossCalling, rng, instant = false }) {
+  // Only an open modal holds the boss's handset. An absent or overflow worker can leave a call id
+  // behind, but that id must never turn a short message notification into a permanent boss call.
+  const bossHeld = bossCalling;
+  return {
+    ...world,
+    actors: world.actors.map((a) => {
+      if (a.state === 'leaving') return a;
+      const held = a.role === 'orchestrator' ? bossHeld : callingIds.has(a.id);
+      if (held) return { ...startCall(a), callHeld: true,
+        ackPending: a.ackPending || a.state === 'ack', timer: a.state === 'oncall' ? a.timer : 0 };
+      if (a.role === 'orchestrator' && a.ackPending) return acknowledge(a, rng);
+      if (!a.callHeld || a.state !== 'oncall') return a;
+      const next = { ...a, callHeld: false };
+      if (next.timer <= 0) {
+        // Release a call at the real origin; reduced motion must not teleport a held sprite.
+        if (a.dragging) [next.x, next.y] = a.dragOrigin;
+        endCall(next, rng, instant);
+        if (a.dragging) {
+          next.dragOrigin = [next.x, next.y];
+          next.x = a.x;
+          next.y = a.y;
+        }
+      }
+      return next;
+    }),
+  };
+}
+
 function startActivity(a, actors, rng) {
   const choice = pickWeighted(rng, ACTIVITY_WEIGHTS);
 
@@ -305,7 +422,7 @@ function startActivity(a, actors, rng) {
   if (choice === 'chatting') {
     // Only interrupt someone who is actually at their desk. Chasing an agent that is itself walking
     // somewhere means arriving at a seat they have already left.
-    const candidates = actors.filter((o) => o.role === 'worker' && o.id !== a.id && o.state === 'working');
+    const candidates = actors.filter((o) => o.role === 'worker' && o.id !== a.id && o.state === 'working' && !o.dragging);
     if (candidates.length === 0) {
       a.timer = between(rng, DURATION.working);
       return;
@@ -335,7 +452,7 @@ function onArrive(a, byId, rng) {
     const partner = byId.get(a.partner);
     // The partner may have wandered off — or finished — between the decision and the arrival. Standing
     // there talking to an empty chair for a few seconds is a better failure than a crash.
-    if (partner && partner.state === 'working') {
+    if (partner && partner.state === 'working' && !partner.dragging) {
       partner.state = 'chatting';
       partner.next = 'working';
       partner.partner = a.id;
@@ -370,11 +487,18 @@ function onTimeout(a, actors, rng) {
 
 // One step of the simulation. Returns a new world with new actor objects — React needs a changed
 // identity to re-render, and cloning seven small objects ten times a second costs nothing.
-export function tick(world, dtMs, rng = Math.random) {
+export function tick(world, dtMs, rng = Math.random, { instant = false } = {}) {
   const actors = world.actors.map((a) => ({ ...a, path: a.path.map((p) => p) }));
   const byId = new Map(actors.map((a) => [a.id, a]));
 
   for (const a of actors) {
+    if (a.dragging) continue;
+    if (a.state === 'oncall' || a.state === 'ack') {
+      a.timer = Math.max(0, a.timer - dtMs);
+      if (!a.callHeld && a.timer === 0) endCall(a, rng, instant);
+      continue;
+    }
+    if (instant) continue;
     if (a.path.length > 0) {
       if (advance(a, dtMs)) onArrive(a, byId, rng);
       continue;

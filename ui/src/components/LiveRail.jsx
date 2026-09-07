@@ -3,6 +3,7 @@ import { postJson } from '../api.js';
 import { RunRow } from './RunRow.jsx';
 import { OfficeScene } from './OfficeScene.jsx';
 import { finishedIds, runToolUseId, visibleRuns } from './runList.js';
+import { planTrashAction, takeoverMessage } from './trashAction.js';
 
 const rank = (r) => (r.status === 'running' ? 0 : 1);
 
@@ -27,6 +28,11 @@ export function LiveRail({
   projectPath = null,
   officeExpanded = false,
   onToggleOffice = null,
+  messageAt = null,
+  callingRunIds = [],
+  bossCalling = false,
+  decisionAt = null,
+  onTakeover = null,
 }) {
   // One row open at a time, and kept here rather than in App: which row a user has expanded is a
   // property of this panel, and lifting it would re-render the whole shell on every click.
@@ -39,13 +45,13 @@ export function LiveRail({
   const [dismissed, setDismissed] = useState(() => new Set());
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState(null);
+  const [trashNotice, setTrashNotice] = useState(null);
 
   const scoped = visibleRuns(runs, { projectPath, dismissed });
   const ordered = [...scoped].sort((a, b) => rank(a) - rank(b) || b.startedAt - a.startedAt);
   const finished = finishedIds(ordered);
 
-  async function clearFinished() {
-    const ids = finished;
+  async function dismissRuns(ids) {
     if (ids.length === 0) return;
     setDismissed((prev) => new Set([...prev, ...ids]));
     setClearing(true);
@@ -67,6 +73,31 @@ export function LiveRail({
     }
   }
 
+  async function trashRun(id) {
+    const run = runs.find((candidate) => candidate.id === id);
+    if (!run) {
+      setTrashNotice('Run ini sudah tidak tersedia.');
+      return;
+    }
+    const plan = planTrashAction(run, { selectedProjectPath: projectPath });
+    if (plan.kind === 'refuse') { setTrashNotice(plan.reason); return; }
+    if (plan.kind === 'dismiss') {
+      setTrashNotice(null);
+      await dismissRuns([id]);
+      return;
+    }
+    if (!onTakeover) { setTrashNotice('Kanal chat dashboard belum tersedia untuk mengirim permintaan take over.'); return; }
+    setTrashNotice('Mengirim PERMINTAAN take over ke orkestrator — proses tidak dibunuh paksa.');
+    try {
+      const sent = await onTakeover(takeoverMessage(run, { now: Date.now() }));
+      setTrashNotice(sent === false
+        ? 'Permintaan take over gagal dikirim. Coba lagi melalui chat dashboard.'
+        : 'PERMINTAAN take over dikirim ke orkestrator — proses tidak dibunuh paksa.');
+    } catch (err) {
+      setTrashNotice(`Permintaan take over gagal dikirim: ${err?.message ?? String(err)}`);
+    }
+  }
+
   return (
     // aria-live: the whole point of this panel is that it changes while the user watches it.
     // Left at the spec default relevance ("additions text") rather than narrowed to "additions
@@ -82,6 +113,11 @@ export function LiveRail({
         taskActivity={taskActivity}
         expanded={officeExpanded}
         onToggleExpand={onToggleOffice}
+        messageAt={messageAt}
+        callingRunIds={callingRunIds}
+        bossCalling={bossCalling}
+        decisionAt={decisionAt}
+        onTrashRun={trashRun}
       />
       <div className="rail-head">
         <h2>Live agents</h2>
@@ -90,12 +126,13 @@ export function LiveRail({
             type="button"
             className="btn subtle rail-clear"
             disabled={clearing}
-            onClick={clearFinished}
+            onClick={() => dismissRuns(finished)}
           >
             {clearing ? 'Clearing…' : 'Clear finished'}
           </button>
         )}
       </div>
+      {trashNotice && <p className="notice" role="status">{trashNotice}</p>}
       {clearError && (
         <p className="notice" role="status">
           Those rows could not be cleared: {clearError}. They are still here, and still in the daemon.
@@ -122,6 +159,7 @@ export function LiveRail({
                 activity={taskActivity[runToolUseId(run)]}
                 expanded={openId === run.id}
                 onToggle={(id) => setOpenId((current) => (current === id ? null : id))}
+                onTrashRun={trashRun}
               />
             ))}
           </ul>
